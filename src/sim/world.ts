@@ -17,10 +17,17 @@ export interface Unit {
   speed: number;         // aktuelle Geschwindigkeit in m/s (für Anzeige)
 }
 
-// Drehgeschwindigkeit in Grad pro Sekunde
-const TURN_RATE = { tracked: 50, wheeled: 40, foot: 180 };
-// Normales Bewegen ist vorsichtiger als „Schnell“
-const CAUTIOUS = 0.6;
+// ---------- Stellschrauben fürs Fahrgefühl ----------
+// Spieltempo statt Echtzeit-Tempo: Fahrzeuge langsamer, Infanterie schneller, damit beides auf 2 km zusammenpasst
+const GAME_SPEED = { tracked: 0.5, wheeled: 0.45, foot: 2.7 };
+// Normales Bewegen ist vorsichtiger als „Schnell“ (Infanterie geht statt zu rennen)
+const CAUTIOUS = { tracked: 0.65, wheeled: 0.65, foot: 0.6 };
+// Drehgeschwindigkeit in Grad pro Sekunde; Kettenfahrzeuge drehen auf der Stelle, Radfahrzeuge lenken
+const TURN_RATE = { tracked: 45, wheeled: 35, foot: 240 };
+// Beschleunigung und Bremsen in m/s²
+const ACCEL = { tracked: 1.5, wheeled: 2.2, foot: 3 };
+// Wegpunkt gilt als erreicht innerhalb dieser Entfernung (Zwischenpunkte großzügiger als das Ziel)
+const ARRIVE = { final: 2, between: 7 };
 
 export class World {
   units: Unit[] = [];
@@ -49,8 +56,10 @@ export class World {
       const spacing = u.type.mobility === 'foot' ? 20 : 35;
       const offset = (i - (sorted.length - 1) / 2) * spacing;
       const goal = { x: clamp(target.x + px * offset, 0, this.size), y: clamp(target.y + py * offset, 0, this.size) };
-      const path = findPath(this.nav, u, goal, { mobility: u.type.mobility, preferRoads: fast });
-      u.path = path ?? [];
+      const path = findPath(this.nav, u, goal, { mobility: u.type.mobility, preferRoads: fast }) ?? [];
+      // Wegpunkte direkt bei der Einheit weglassen, sonst dreht sie erst einmal um
+      while (path.length > 1 && Math.hypot(path[0].x - u.x, path[0].y - u.y) < 12) path.shift();
+      u.path = path;
       u.fast = fast;
     });
   }
@@ -61,25 +70,44 @@ export class World {
 
   update(dt: number) {
     for (const u of this.units) {
+      const mob = u.type.mobility;
       const next = u.path[0];
-      if (!next) { u.speed = 0; continue; }
-      const dx = next.x - u.x, dy = next.y - u.y, dist = Math.hypot(dx, dy);
-      if (dist < 1.5) { u.path.shift(); continue; }
-      // Erst in Richtung drehen; bei großem Winkel fast auf der Stelle
-      const want = Math.atan2(dy, dx);
-      const diff = angleDiff(want, u.heading);
-      const maxTurn = (TURN_RATE[u.type.mobility] * Math.PI / 180) * dt;
-      u.heading += Math.max(-maxTurn, Math.min(maxTurn, diff));
-      const align = Math.max(0, Math.cos(diff));
-      // Geschwindigkeit je Gelände: Straße = Straßentempo, sonst Geländetempo mal Geländefaktor
-      const f = speedAt(this.nav, u.type.mobility, u.x, u.y);
-      const road = this.nav.road[Math.floor(u.y / NAV_CELL) * this.nav.w + Math.floor(u.x / NAV_CELL)] === 1;
-      const kmh = road ? u.type.roadSpeed : Math.min(u.type.offroadSpeed, u.type.roadSpeed * Math.max(f, 0.15));
-      u.speed = (kmh / 3.6) * (u.fast ? 1 : CAUTIOUS) * align * align;
-      const step = Math.min(dist, u.speed * dt);
-      u.x += Math.cos(u.heading) * step;
-      u.y += Math.sin(u.heading) * step;
+      let want = 0; // gewünschte Geschwindigkeit in m/s
+      if (next) {
+        const last = u.path.length === 1;
+        const dx = next.x - u.x, dy = next.y - u.y, dist = Math.hypot(dx, dy);
+        if (dist < (last ? ARRIVE.final : ARRIVE.between)) { u.path.shift(); continue; }
+        const diff = angleDiff(Math.atan2(dy, dx), u.heading);
+        const turn = (TURN_RATE[mob] * Math.PI) / 180;
+        u.heading += Math.max(-turn * dt, Math.min(turn * dt, diff));
+        want = this.cruise(u);
+        if (mob === 'tracked' && Math.abs(diff) > 0.6) want = 0; // erst auf der Stelle drehen
+        else if (mob === 'wheeled') {
+          // Wendekreis: ist der Punkt zu nah für den Lenkeinschlag, langsamer fahren; geht es gar nicht, Punkt auslassen
+          const radius = Math.max(u.speed, 1) / turn;
+          if (Math.abs(diff) > 1.2 && dist < radius * 1.5) {
+            if (!last) { u.path.shift(); continue; }
+            want = Math.min(want, 2);
+          } else want *= Math.max(0.3, Math.cos(diff));
+        } else want *= Math.max(0, Math.cos(diff));
+        // Vor dem Ziel abbremsen
+        if (last) want = Math.min(want, Math.sqrt(2 * ACCEL[mob] * dist));
+      }
+      // Beschleunigen bzw. bremsen
+      const a = ACCEL[mob] * dt;
+      u.speed = want > u.speed ? Math.min(want, u.speed + a) : Math.max(want, u.speed - a * 2);
+      u.x += Math.cos(u.heading) * u.speed * dt;
+      u.y += Math.sin(u.heading) * u.speed * dt;
     }
+  }
+
+  // Reisegeschwindigkeit in m/s je nach Gelände und Befehl
+  private cruise(u: Unit) {
+    const t = u.type, mob = t.mobility;
+    const f = speedAt(this.nav, mob, u.x, u.y);
+    const road = this.nav.road[Math.floor(u.y / NAV_CELL) * this.nav.w + Math.floor(u.x / NAV_CELL)] === 1;
+    const kmh = road ? t.roadSpeed : Math.min(t.offroadSpeed, t.roadSpeed * Math.max(f, 0.15));
+    return (kmh / 3.6) * GAME_SPEED[mob] * (u.fast ? 1 : CAUTIOUS[mob]);
   }
 
   // Einheit an einer Stelle (für Antippen); radius in Metern

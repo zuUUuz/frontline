@@ -114,7 +114,7 @@ export function findPath(nav: NavGrid, from: { x: number; y: number }, to: { x: 
   if (!goalPt) return null;
   const start = cellOf(nav, from.x, from.y), goal = cellOf(nav, goalPt.x, goalPt.y);
   // Kosten einer Zelle: Zeit pro Meter; bei „Schnell“ kosten Nicht-Straßen extra
-  const cost = (i: number) => (1 / Math.max(s[i], 0.05)) * (opt.preferRoads && !nav.road[i] ? 1.6 : 1);
+  const cost = (i: number) => (1 / Math.max(s[i], 0.05)) * (opt.preferRoads && !nav.road[i] ? 1.25 : 1);
   const g = new Float32Array(nav.w * nav.h).fill(Infinity);
   const came = new Int32Array(nav.w * nav.h).fill(-1);
   const closed = new Uint8Array(nav.w * nav.h);
@@ -152,31 +152,30 @@ export function findPath(nav: NavGrid, from: { x: number; y: number }, to: { x: 
   return smooth(nav, opt, [from, ...pts]).slice(1);
 }
 
-// Wegglättung: Zwischenpunkte weglassen, wenn die gerade Linie mindestens so gutes Gelände hat
+// Wegglättung: Zwischenpunkte weglassen, wenn die gerade Linie nicht länger dauert als der Weg darüber
+// und nirgends unpassierbar ist. Ergibt ruhige, gerade Strecken statt Rasterzickzack.
 function smooth(nav: NavGrid, opt: PathOptions, pts: { x: number; y: number }[]) {
   const s = nav.speed[opt.mobility];
-  const lineMin = (a: { x: number; y: number }, b: { x: number; y: number }) => {
-    const steps = Math.ceil(Math.hypot(b.x - a.x, b.y - a.y) / (NAV_CELL / 2));
-    let min = Infinity, roadAll = true;
+  const cellCost = (c: number) => (1 / Math.max(s[c], 0.05)) * (opt.preferRoads && !nav.road[c] ? 1.25 : 1);
+  // Zeitkosten einer geraden Linie; Infinity, wenn sie durch Unpassierbares führt
+  const lineCost = (a: { x: number; y: number }, b: { x: number; y: number }) => {
+    const len = Math.hypot(b.x - a.x, b.y - a.y), steps = Math.max(1, Math.ceil(len / (NAV_CELL / 2)));
+    let sum = 0;
     for (let i = 0; i <= steps; i++) {
       const c = cellOf(nav, a.x + ((b.x - a.x) * i) / steps, a.y + ((b.y - a.y) * i) / steps);
-      min = Math.min(min, s[c]);
-      if (!nav.road[c]) roadAll = false;
+      if (s[c] === 0) return Infinity;
+      sum += cellCost(c);
     }
-    return { min, roadAll };
+    return (sum / (steps + 1)) * len;
   };
+  const seg = pts.slice(1).map((p, i) => lineCost(pts[i], p)); // Kosten der Originalabschnitte
   const out = [pts[0]];
   let i = 0;
   while (i < pts.length - 1) {
-    // So weit wie möglich geradeaus: j wächst, solange die Abkürzung nicht durch schlechteres Gelände führt
-    let best = i + 1, pathMin = lineMin(pts[i], pts[i + 1]).min, pathRoad = lineMin(pts[i], pts[i + 1]).roadAll;
-    for (let j = i + 2; j < pts.length && j <= i + 40; j++) {
-      const seg = lineMin(pts[j - 1], pts[j]);
-      pathMin = Math.min(pathMin, seg.min);
-      pathRoad &&= seg.roadAll;
-      const direct = lineMin(pts[i], pts[j]);
-      if (direct.min > 0 && direct.min >= pathMin && (!opt.preferRoads || !pathRoad || direct.roadAll)) best = j;
-      else break;
+    let best = i + 1, along = 0;
+    for (let j = i + 1; j < pts.length && j <= i + 60; j++) {
+      along += seg[j - 1];
+      if (j > i + 1 && lineCost(pts[i], pts[j]) <= along * 1.02) best = j;
     }
     out.push(pts[best]);
     i = best;

@@ -1,11 +1,12 @@
 import './ui/style.css';
-import { Application, Container, Graphics } from 'pixi.js';
+import { Application, Container, Graphics, Sprite, Texture } from 'pixi.js';
 import { loadMap } from './map/load';
 import { drawMap } from './map/render';
 import { TERRAIN_INFO } from './map/terrain';
 import { createCamera } from './ui/camera';
 import { buildNav } from './sim/nav';
 import { World, Unit } from './sim/world';
+import { buildSight, computeViewMap, VIEW_CELL } from './sim/vision';
 import { UnitView } from './render/units';
 import { CATEGORY_NAME } from './data/units';
 
@@ -33,12 +34,23 @@ async function start() {
   const layers = drawMap(map);
   const paths = new Graphics();
   const unitLayer = new Container();
-  layers.root.addChild(paths, unitLayer);
+
+  // Nebel des Krieges wie bei Broken Arrow: was eigene Einheiten sehen, bleibt hell, der Rest wird leicht abgedunkelt
+  const fogN = Math.ceil(map.size / VIEW_CELL);
+  const fogCanvas = document.createElement('canvas');
+  fogCanvas.width = fogCanvas.height = fogN;
+  const fogCtx = fogCanvas.getContext('2d')!;
+  const fogImg = fogCtx.createImageData(fogN, fogN);
+  const fogTexture = Texture.from(fogCanvas);
+  const fog = new Sprite(fogTexture);
+  fog.width = fog.height = fogN * VIEW_CELL;
+  const viewMap = new Uint8Array(fogN * fogN);
+  layers.root.addChild(fog, paths, unitLayer);
   app.stage.addChild(layers.root);
   const cam = createCamera(app.canvas, layers.root, map.size);
 
   // ---------- Welt und Einheiten ----------
-  const world = new World(buildNav(map), map.size);
+  const world = new World(buildNav(map), map.size, buildSight(map));
   BLUE_UNITS.forEach((id, i) => world.spawn(id, 'blue', BLUE_START.x + (i % 3) * 90, BLUE_START.y + Math.floor(i / 3) * 90, 0));
   RED_UNITS.forEach((id, i) => world.spawn(id, 'red', RED_START.x + (i % 3) * 90, RED_START.y + Math.floor(i / 3) * 90, Math.PI));
   const views = new Map<number, UnitView>();
@@ -50,6 +62,15 @@ async function start() {
 
   let selected: Unit[] = [];
   let fast = false;
+  let revealAll = false;
+  let fogTimer = 0;
+  const updateFog = () => {
+    computeViewMap(world.sight, map.size, world.units.filter(u => u.side === 'blue'), viewMap);
+    for (let i = 0; i < viewMap.length; i++) fogImg.data.set(viewMap[i] ? [0, 0, 0, 0] : [10, 14, 20, 105], i * 4);
+    fogCtx.putImageData(fogImg, 0, 0);
+    fogTexture.source.update();
+  };
+  updateFog();
   const SPEEDS = [1, 3, 10, 0];
   let speedIndex = 0;
 
@@ -64,7 +85,9 @@ async function start() {
   app.ticker.add(ticker => {
     const dt = Math.min(0.1, ticker.deltaMS / 1000) * SPEEDS[speedIndex];
     if (dt > 0) world.update(dt);
-    for (const v of views.values()) v.update(cam.scale);
+    fogTimer -= ticker.deltaMS;
+    if (fogTimer <= 0) { fogTimer = 400; updateFog(); }
+    for (const v of views.values()) v.update(cam.scale, world.time, revealAll);
     // Wege der ausgewählten Einheiten
     paths.clear();
     for (const u of selected) {
@@ -92,7 +115,7 @@ async function start() {
     const own = world.unitAt(x, y, radius, 'blue');
     if (own) { select(selected.length === 1 && selected[0] === own ? [] : [own]); return; }
     const enemy = world.unitAt(x, y, radius, 'red');
-    if (enemy) { showCard(enemy, 1); return; }
+    if (enemy && (enemy.spotted || revealAll)) { showCard(enemy, 1); return; }
     if (selected.length) { world.order(selected, { x, y }, fast); return; }
     if (x < 0 || y < 0 || x > map.size || y > map.size) return;
     const t = TERRAIN_INFO[map.terrainAt(x, y)];
@@ -145,6 +168,20 @@ async function start() {
   $('btn-speed').addEventListener('click', () => {
     speedIndex = (speedIndex + 1) % SPEEDS.length;
     $('btn-speed').textContent = SPEEDS[speedIndex] ? `Tempo ${SPEEDS[speedIndex]}×` : 'Pause';
+  });
+
+  $('btn-test').addEventListener('click', () => {
+    const menu = $('test-menu');
+    menu.hidden = !menu.hidden;
+    $('btn-test').setAttribute('aria-expanded', String(!menu.hidden));
+  });
+  $('btn-reveal').addEventListener('click', () => {
+    revealAll = !revealAll;
+    $('btn-reveal').setAttribute('aria-pressed', String(revealAll));
+  });
+  $('btn-wander').addEventListener('click', () => {
+    world.wander = !world.wander;
+    $('btn-wander').setAttribute('aria-pressed', String(world.wander));
   });
 
   $('btn-raster').addEventListener('click', () => {

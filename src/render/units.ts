@@ -24,6 +24,7 @@ export class UnitView {
   private bodyGfx = new Graphics();
   private ring = new Graphics();
   private label: Text;
+  private ghostLabel: Text;
   selected = false;
 
   constructor(readonly unit: Unit) {
@@ -32,17 +33,27 @@ export class UnitView {
     this.label = new Text({ text: unit.type.name, style: { fontFamily: 'system-ui, sans-serif', fontSize: 11, fill: 0xf2f2e6, stroke: { color: 0x101010, width: 3 } } });
     this.label.anchor.set(0.5, 0);
     this.label.position.set(0, 13);
-    this.symbol.addChild(this.symbolGfx, this.label);
+    this.ghostLabel = new Text({ text: '', style: { fontFamily: 'system-ui, sans-serif', fontSize: 10, fill: 0xffd0cc, stroke: { color: 0x101010, width: 3 } } });
+    this.ghostLabel.anchor.set(0.5, 1);
+    this.ghostLabel.position.set(0, -17);
+    this.symbol.addChild(this.symbolGfx, this.label, this.ghostLabel);
     this.body.addChild(this.bodyGfx);
     this.root.addChild(this.ring, this.body, this.symbol);
   }
 
-  // Jedes Bild: Position, Drehung, Detailstufe je Zoom
-  update(scale: number) {
+  // Jedes Bild: Position, Drehung, Detailstufe je Zoom; Gegner nur, wenn entdeckt (sonst Geist)
+  update(scale: number, time: number, revealAll: boolean) {
     const u = this.unit, t = u.type;
-    this.root.position.set(u.x, u.y);
+    const seen = u.side === 'blue' || u.spotted || revealAll;
+    const ghost = !seen && !!u.lastSeen;
+    this.root.visible = seen || ghost;
+    if (!this.root.visible) return;
+    const pos = ghost ? u.lastSeen! : u;
+    this.root.position.set(pos.x, pos.y);
+    this.root.alpha = ghost ? 0.45 : u.side === 'red' && !u.spotted ? 0.6 : 1;
+    this.ghostLabel.text = ghost ? `vor ${formatAge(time - u.lastSeen!.time)}` : '';
     const isFoot = t.mobility === 'foot';
-    const close = isFoot ? scale >= INFANTRY_MIN_SCALE : t.length * scale >= VEHICLE_MIN_PX;
+    const close = !ghost && (isFoot ? scale >= INFANTRY_MIN_SCALE : t.length * scale >= VEHICLE_MIN_PX);
     this.body.visible = close;
     this.symbol.visible = !close;
     this.body.rotation = u.heading;
@@ -105,6 +116,10 @@ export class UnitView {
     // Seitenfarbe als dünner Rand vorn, damit man auch nah dran Freund und Feind unterscheidet
     g.rect(L / 2 - 0.35, -W / 2 + 0.3, 0.35, W - 0.6).fill(c.tint);
   }
+}
+
+function formatAge(s: number) {
+  return s < 60 ? `${Math.round(s)} s` : `${Math.floor(s / 60)} min`;
 }
 
 // Kategoriesymbole nach APP-6 (vereinfacht)

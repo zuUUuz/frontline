@@ -2,6 +2,7 @@
 
 import { UnitType, unitType } from '../data/units';
 import { NavGrid, NAV_CELL, findPath, freeAt, nearestPassable, segmentFree, speedAt } from './nav';
+import { SightGrid, canSpot } from './vision';
 
 export type Side = 'blue' | 'red'; // blau = eigene Seite, rot = Gegner
 
@@ -16,7 +17,13 @@ export interface Unit {
   fast: boolean;         // „Schnell bewegen“
   speed: number;         // aktuelle Geschwindigkeit in m/s (für Anzeige)
   stuck: number;         // Sekunden, die die Einheit trotz Weg nicht vorankommt
+  spotted: boolean;      // nur Gegner: gerade von einer eigenen Einheit gesehen
+  lastSeen?: { x: number; y: number; time: number }; // nur Gegner: letzte bekannte Position (Spielzeit in s)
+  wanderAt?: number;     // nur Gegner im Testmodus: wann der nächste Bewegungsbefehl kommt
 }
+
+const SPOT_INTERVAL = 0.25; // so oft (Spielsekunden) wird neu geprüft, wer wen sieht
+const WANDER = { radius: 350, pauseMin: 25, pauseMax: 60 }; // Testbewegung der Gegner
 
 // ---------- Stellschrauben fürs Fahrgefühl ----------
 // Spieltempo statt Echtzeit-Tempo: Fahrzeuge langsamer, Infanterie schneller, damit beides auf 2 km zusammenpasst
@@ -36,14 +43,17 @@ const PIVOT_ANGLE = 1.4;
 
 export class World {
   units: Unit[] = [];
+  time = 0; // Spielzeit in Sekunden
+  wander = true; // Gegner bewegen sich zum Testen auf eigene Faust
   private nextId = 1;
+  private spotTimer = 0;
 
-  constructor(readonly nav: NavGrid, readonly size: number) {}
+  constructor(readonly nav: NavGrid, readonly size: number, readonly sight: SightGrid) {}
 
   spawn(typeId: string, side: Side, x: number, y: number, heading = 0) {
     const type = unitType(typeId);
     const p = nearestPassable(this.nav, type.mobility, x, y) ?? { x, y };
-    const unit: Unit = { id: this.nextId++, type, side, x: p.x, y: p.y, heading, path: [], fast: false, speed: 0, stuck: 0 };
+    const unit: Unit = { id: this.nextId++, type, side, x: p.x, y: p.y, heading, path: [], fast: false, speed: 0, stuck: 0, spotted: false };
     this.units.push(unit);
     return unit;
   }
@@ -74,6 +84,10 @@ export class World {
   }
 
   update(dt: number) {
+    this.time += dt;
+    this.spotTimer -= dt;
+    if (this.spotTimer <= 0) { this.spotTimer = SPOT_INTERVAL; this.updateSpotting(); }
+    if (this.wander) this.wanderEnemies();
     for (const u of this.units) {
       const mob = u.type.mobility;
       let want = 0; // gewünschte Geschwindigkeit in m/s
@@ -158,6 +172,30 @@ export class World {
     if (freeAt(this.nav, mob, u.x, u.y + dy)) { u.y += dy; return Math.abs(dy) / len; }
     u.speed *= 0.5;
     return 0;
+  }
+
+  // Wer sieht wen? Gegner sind entdeckt, solange mindestens eine eigene Einheit sie sieht
+  private updateSpotting() {
+    const blue = this.units.filter(u => u.side === 'blue');
+    for (const r of this.units) {
+      if (r.side !== 'red') continue;
+      r.spotted = blue.some(b => canSpot(this.sight, b, r));
+      if (r.spotted) r.lastSeen = { x: r.x, y: r.y, time: this.time };
+    }
+  }
+
+  // Testmodus: Gegner fahren ab und zu ein Stück in ihrer Umgebung herum
+  private wanderEnemies() {
+    for (const u of this.units) {
+      if (u.side !== 'red' || u.path.length) continue;
+      u.wanderAt ??= this.time + WANDER.pauseMin * Math.random();
+      if (this.time < u.wanderAt) continue;
+      const a = Math.random() * Math.PI * 2, r = WANDER.radius * (0.4 + 0.6 * Math.random());
+      const goal = { x: clamp(u.x + Math.cos(a) * r, 50, this.size - 50), y: clamp(u.y + Math.sin(a) * r, 50, this.size - 50) };
+      u.path = findPath(this.nav, u, goal, { mobility: u.type.mobility, preferRoads: false }) ?? [];
+      u.fast = false;
+      u.wanderAt = this.time + WANDER.pauseMin + Math.random() * (WANDER.pauseMax - WANDER.pauseMin);
+    }
   }
 
   // Reisegeschwindigkeit in m/s je nach Gelände und Befehl

@@ -16,9 +16,14 @@
     <span class="spacer"></span>
     <button class="hud-btn" id="btn-box" type="button" aria-pressed="false">Rahmen</button>
     <button class="hud-btn" id="btn-speed" type="button">Tempo 1×</button>
-    <button class="hud-btn" id="btn-raster" type="button" aria-pressed="false">Gelände</button>
     <button class="hud-btn" id="btn-fit" type="button">Ganze Karte</button>
+    <button class="hud-btn" id="btn-test" type="button" aria-expanded="false">Test ▾</button>
   </header>
+  <div class="test-menu" id="test-menu" hidden>
+    <button class="hud-btn" id="btn-reveal" type="button" aria-pressed="false">Alle Gegner zeigen</button>
+    <button class="hud-btn" id="btn-wander" type="button" aria-pressed="true">Gegner fahren herum</button>
+    <button class="hud-btn" id="btn-raster" type="button" aria-pressed="false">Gelände-Raster</button>
+  </div>
   <div class="box-layer" id="box-layer" hidden><div class="box" id="box" hidden></div></div>
   <p class="info" id="info" hidden></p>
   <section class="card" id="card" hidden></section>

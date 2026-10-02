@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="theme-color" content="#1b1f1a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Frontline</title>
+</head>
+<body>
+<main id="app">
+  <div id="map"></div>
+  <header class="hud-top">
+    <span class="map-name" id="map-name">Lade Karte …</span>
+    <span class="spacer"></span>
+    <button class="hud-btn" id="btn-raster" type="button" aria-pressed="false">Gelände</button>
+    <button class="hud-btn" id="btn-fit" type="button">Ganze Karte</button>
+  </header>
+  <p class="info" id="info" hidden></p>
+  <footer class="hud-bottom">
+    <div class="scale"><span class="scale-bar" id="scale-bar"></span><span id="scale-label"></span></div>
+    <span class="spacer"></span>
+    <span class="attribution" id="attribution"></span>
+  </footer>
+  <div class="rotate" id="rotate">Bitte das Handy quer halten</div>
+</main>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>

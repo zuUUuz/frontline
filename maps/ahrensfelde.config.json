@@ -1,0 +1,8 @@
+{
+  "id": "ahrensfelde",
+  "name": "Ahrensfelde",
+  "description": "Stadtrand Berlin/Brandenburg: Dorfkern Ahrensfelde, S-Bahnhof, Plattenbauten Marzahn-Nord, Felder und B158",
+  "center": { "lat": 52.5745, "lon": 13.5660 },
+  "sizeMeters": 2000,
+  "cellMeters": 4
+}

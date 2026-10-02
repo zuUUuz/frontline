@@ -1,7 +1,7 @@
 // Spielwelt: Einheiten, ihre Befehle und die Bewegung über das Gelände.
 
 import { UnitType, unitType } from '../data/units';
-import { NavGrid, NAV_CELL, findPath, nearestPassable, speedAt } from './nav';
+import { NavGrid, NAV_CELL, findPath, freeAt, nearestPassable, segmentFree, speedAt } from './nav';
 
 export type Side = 'blue' | 'red'; // blau = eigene Seite, rot = Gegner
 
@@ -15,6 +15,7 @@ export interface Unit {
   path: { x: number; y: number }[];
   fast: boolean;         // „Schnell bewegen“
   speed: number;         // aktuelle Geschwindigkeit in m/s (für Anzeige)
+  stuck: number;         // Sekunden, die die Einheit trotz Weg nicht vorankommt
 }
 
 // ---------- Stellschrauben fürs Fahrgefühl ----------
@@ -26,8 +27,12 @@ const CAUTIOUS = { tracked: 0.65, wheeled: 0.65, foot: 0.6 };
 const TURN_RATE = { tracked: 45, wheeled: 35, foot: 240 };
 // Beschleunigung und Bremsen in m/s²
 const ACCEL = { tracked: 1.5, wheeled: 2.2, foot: 3 };
-// Wegpunkt gilt als erreicht innerhalb dieser Entfernung (Zwischenpunkte großzügiger als das Ziel)
-const ARRIVE = { final: 2, between: 7 };
+// Ziel gilt als erreicht innerhalb dieser Entfernung
+const ARRIVE = 2;
+// Die Einheit zielt auf einen Punkt so weit voraus auf ihrem Weg (fährt dadurch Kurven statt Ecken)
+const LOOKAHEAD = { tracked: 9, wheeled: 11, foot: 3 };
+// Ab diesem Winkel drehen Kettenfahrzeuge auf der Stelle statt im Bogen
+const PIVOT_ANGLE = 1.4;
 
 export class World {
   units: Unit[] = [];
@@ -38,7 +43,7 @@ export class World {
   spawn(typeId: string, side: Side, x: number, y: number, heading = 0) {
     const type = unitType(typeId);
     const p = nearestPassable(this.nav, type.mobility, x, y) ?? { x, y };
-    const unit: Unit = { id: this.nextId++, type, side, x: p.x, y: p.y, heading, path: [], fast: false, speed: 0 };
+    const unit: Unit = { id: this.nextId++, type, side, x: p.x, y: p.y, heading, path: [], fast: false, speed: 0, stuck: 0 };
     this.units.push(unit);
     return unit;
   }
@@ -71,34 +76,88 @@ export class World {
   update(dt: number) {
     for (const u of this.units) {
       const mob = u.type.mobility;
-      const next = u.path[0];
       let want = 0; // gewünschte Geschwindigkeit in m/s
-      if (next) {
-        const last = u.path.length === 1;
-        const dx = next.x - u.x, dy = next.y - u.y, dist = Math.hypot(dx, dy);
-        if (dist < (last ? ARRIVE.final : ARRIVE.between)) { u.path.shift(); continue; }
-        const diff = angleDiff(Math.atan2(dy, dx), u.heading);
+      // Erreichte Wegpunkte abhaken: alle, die näher als der Vorausblick liegen (außer dem Ziel)
+      // … aber nur, wenn der Punkt danach in gerader Linie frei erreichbar ist
+      while (u.path.length > 1 && Math.hypot(u.path[0].x - u.x, u.path[0].y - u.y) < LOOKAHEAD[mob] && segmentFree(this.nav, mob, u, u.path[1])) u.path.shift();
+      const goal = u.path[u.path.length - 1];
+      if (goal && u.path.length === 1 && Math.hypot(goal.x - u.x, goal.y - u.y) < ARRIVE) u.path.shift();
+      if (u.path.length) {
+        const aim = this.aimPoint(u);
+        const dist = Math.hypot(aim.x - u.x, aim.y - u.y);
+        const diff = angleDiff(Math.atan2(aim.y - u.y, aim.x - u.x), u.heading);
         const turn = (TURN_RATE[mob] * Math.PI) / 180;
         u.heading += Math.max(-turn * dt, Math.min(turn * dt, diff));
         want = this.cruise(u);
-        if (mob === 'tracked' && Math.abs(diff) > 0.6) want = 0; // erst auf der Stelle drehen
-        else if (mob === 'wheeled') {
-          // Wendekreis: ist der Punkt zu nah für den Lenkeinschlag, langsamer fahren; geht es gar nicht, Punkt auslassen
-          const radius = Math.max(u.speed, 1) / turn;
-          if (Math.abs(diff) > 1.2 && dist < radius * 1.5) {
-            if (!last) { u.path.shift(); continue; }
-            want = Math.min(want, 2);
-          } else want *= Math.max(0.3, Math.cos(diff));
-        } else want *= Math.max(0, Math.cos(diff));
+        // Kettenfahrzeuge drehen bei großem Winkel auf der Stelle; festhängende Radfahrzeuge rangieren genauso
+        if ((mob === 'tracked' || (mob === 'wheeled' && u.stuck > 0.4)) && Math.abs(diff) > PIVOT_ANGLE * (mob === 'wheeled' ? 0.5 : 1)) want = 0;
+        else if (mob === 'wheeled') want *= Math.max(0.25, Math.cos(diff));           // im Bogen langsamer
+        else want *= Math.max(mob === 'foot' ? 0 : 0.2, Math.cos(diff));
         // Vor dem Ziel abbremsen
-        if (last) want = Math.min(want, Math.sqrt(2 * ACCEL[mob] * dist));
+        const toGoal = Math.hypot(goal.x - u.x, goal.y - u.y);
+        want = Math.min(want, Math.sqrt(2 * ACCEL[mob] * toGoal) + 0.5);
+        if (dist < 0.5) want = 0;
       }
       // Beschleunigen bzw. bremsen
       const a = ACCEL[mob] * dt;
       u.speed = want > u.speed ? Math.min(want, u.speed + a) : Math.max(want, u.speed - a * 2);
-      u.x += Math.cos(u.heading) * u.speed * dt;
-      u.y += Math.sin(u.heading) * u.speed * dt;
+      const progress = this.moveBy(u, Math.cos(u.heading) * u.speed * dt, Math.sin(u.heading) * u.speed * dt);
+      // Notfall: schafft die Einheit trotz Weg kaum etwas von der gewollten Strecke, Weg von hier aus neu planen
+      if (u.path.length && want > 0.3 && progress < 0.33) u.stuck += dt;
+      else if (u.speed > 0.5) u.stuck = 0;
+      if (u.stuck > 1.5) {
+        const goal = u.path[u.path.length - 1];
+        u.path = findPath(this.nav, u, goal, { mobility: mob, preferRoads: u.fast }) ?? [];
+        // Ist schon der erste Punkt nicht direkt erreichbar, zuerst zur nächsten freien Zellmitte
+        if (u.path.length && !segmentFree(this.nav, mob, u, u.path[0])) {
+          const p = nearestPassable(this.nav, mob, u.x, u.y);
+          if (p) u.path.unshift(p);
+        }
+        u.stuck = 0;
+      }
     }
+  }
+
+  // Punkt auf dem Weg, bis zu LOOKAHEAD Meter voraus (Kurve statt Ecke für Ecke).
+  // Ist der Punkt nicht in gerader Linie erreichbar (Hausecke dazwischen), kürzer vorausschauen.
+  private aimPoint(u: Unit) {
+    for (let look = LOOKAHEAD[u.type.mobility]; look > 2; look -= 2) {
+      const p = this.pointAhead(u, look);
+      if (this.lineFree(u, p)) return p;
+    }
+    return u.path[0];
+  }
+
+  private lineFree(u: Unit, p: { x: number; y: number }) {
+    const d = Math.hypot(p.x - u.x, p.y - u.y), steps = Math.ceil(d / 1.5);
+    for (let i = 1; i <= steps; i++) {
+      if (!freeAt(this.nav, u.type.mobility, u.x + ((p.x - u.x) * i) / steps, u.y + ((p.y - u.y) * i) / steps)) return false;
+    }
+    return true;
+  }
+
+  private pointAhead(u: Unit, distance: number) {
+    let rest = distance;
+    let from = { x: u.x, y: u.y };
+    for (const p of u.path) {
+      const d = Math.hypot(p.x - from.x, p.y - from.y);
+      if (d >= rest) return { x: from.x + ((p.x - from.x) * rest) / d, y: from.y + ((p.y - from.y) * rest) / d };
+      rest -= d;
+      from = p;
+    }
+    return from;
+  }
+
+  // Bewegen mit Kollision: nicht in Häuser, Wasser usw.; an Kanten entlangrutschen
+  // Liefert den Anteil der gewollten Strecke, der tatsächlich geschafft wurde (0..1)
+  private moveBy(u: Unit, dx: number, dy: number): number {
+    const mob = u.type.mobility, len = Math.hypot(dx, dy);
+    if (len === 0) return 1;
+    if (freeAt(this.nav, mob, u.x + dx, u.y + dy)) { u.x += dx; u.y += dy; return 1; }
+    if (freeAt(this.nav, mob, u.x + dx, u.y)) { u.x += dx; return Math.abs(dx) / len; }
+    if (freeAt(this.nav, mob, u.x, u.y + dy)) { u.y += dy; return Math.abs(dy) / len; }
+    u.speed *= 0.5;
+    return 0;
   }
 
   // Reisegeschwindigkeit in m/s je nach Gelände und Befehl

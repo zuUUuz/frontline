@@ -139,7 +139,8 @@ for (const a of areas) if (base[a.k] !== undefined) fillPolygon(a.pts, base[a.k]
 for (const a of areas) if (a.k === 'forest') fillPolygon(a.pts, T.forest);
 for (const a of areas) if (a.k === 'paved') fillPolygon(a.pts, T.road);
 for (const a of areas) if (a.k === 'water') fillPolygon(a.pts, T.water);
-for (const l of lines) if (l.k === 'waterway') strokeLine(l.pts, l.w, T.water);
+// Kleine Bäche und Gräben sind schwieriges, aber passierbares Gelände; nur Flüsse und Kanäle sind Wasser
+for (const l of lines) if (l.k === 'waterway') strokeLine(l.pts, l.w, l.w >= 5 ? T.water : T.scrub);
 for (const l of lines) if (l.k === 'rail') strokeLine(l.pts, l.w, T.rail);
 for (const l of lines) if (l.k === 'road' && l.w >= 3) strokeLine(l.pts, l.w, l.bridge ? T.bridge : T.road);
 for (const b of buildings) fillPolygon(b.pts, T.building);

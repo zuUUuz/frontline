@@ -5,7 +5,9 @@ import type { Container } from 'pixi.js';
 
 export interface Camera {
   scale: number; // Bildschirmpixel pro Meter
+  enabled: boolean; // false, solange z. B. ein Auswahlrahmen gezogen wird
   fit: () => void;
+  centerOn: (x: number, y: number, scale?: number) => void;
   toWorld: (sx: number, sy: number) => { x: number; y: number };
   onChange?: () => void;
   onTap?: (x: number, y: number) => void;
@@ -14,7 +16,7 @@ export interface Camera {
 const MAX_SCALE = 6; // nah: ein 10-m-Panzer ist dann 60 Pixel lang
 
 export function createCamera(el: HTMLElement, world: Container, worldSize: number): Camera {
-  const cam: Camera = { scale: 1, fit, toWorld };
+  const cam: Camera = { scale: 1, enabled: true, fit, centerOn, toWorld };
   let x = 0, y = 0; // Bildschirmposition des Kartenursprungs
   const pointers = new Map<number, { x: number; y: number }>();
   let tapStart: { x: number; y: number; t: number } | null = null;
@@ -48,6 +50,13 @@ export function createCamera(el: HTMLElement, world: Container, worldSize: numbe
     apply();
   }
 
+  function centerOn(wx: number, wy: number, scale = cam.scale) {
+    cam.scale = Math.min(MAX_SCALE, Math.max(minScale(), scale));
+    x = el.clientWidth / 2 - wx * cam.scale;
+    y = el.clientHeight / 2 - wy * cam.scale;
+    apply();
+  }
+
   function toWorld(sx: number, sy: number) {
     return { x: (sx - x) / cam.scale, y: (sy - y) / cam.scale };
   }
@@ -58,6 +67,7 @@ export function createCamera(el: HTMLElement, world: Container, worldSize: numbe
   };
 
   el.addEventListener('pointerdown', e => {
+    if (!cam.enabled) return;
     el.setPointerCapture(e.pointerId);
     const p = local(e);
     pointers.set(e.pointerId, p);

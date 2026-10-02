@@ -14,10 +14,20 @@
   <header class="hud-top">
     <span class="map-name" id="map-name">Lade Karte …</span>
     <span class="spacer"></span>
+    <button class="hud-btn" id="btn-box" type="button" aria-pressed="false">Rahmen</button>
+    <button class="hud-btn" id="btn-speed" type="button">Tempo 1×</button>
     <button class="hud-btn" id="btn-raster" type="button" aria-pressed="false">Gelände</button>
     <button class="hud-btn" id="btn-fit" type="button">Ganze Karte</button>
   </header>
+  <div class="box-layer" id="box-layer" hidden><div class="box" id="box" hidden></div></div>
   <p class="info" id="info" hidden></p>
+  <section class="card" id="card" hidden></section>
+  <nav class="orders" id="orders" hidden>
+    <button class="hud-btn" id="btn-move" type="button" aria-pressed="true">Bewegen</button>
+    <button class="hud-btn" id="btn-fast" type="button" aria-pressed="false">Schnell</button>
+    <button class="hud-btn" id="btn-stop" type="button">Stopp</button>
+    <button class="hud-btn" id="btn-deselect" type="button" aria-label="Auswahl aufheben">✕</button>
+  </nav>
   <footer class="hud-bottom">
     <div class="scale"><span class="scale-bar" id="scale-bar"></span><span id="scale-label"></span></div>
     <span class="spacer"></span>

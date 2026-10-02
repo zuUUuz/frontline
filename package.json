@@ -16,6 +16,7 @@
   },
   "devDependencies": {
     "fast-xml-parser": "^5.11.2",
+    "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vite": "^8.3.2",
     "vite-plugin-singlefile": "^2.3.3"

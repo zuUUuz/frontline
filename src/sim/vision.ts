@@ -15,7 +15,7 @@ const SIGHT_COST: Record<Terrain, number> = {
 const EDGE = 12; // Meter am Anfang und Ende der Sichtlinie, die nicht zählen (Waldrand, Fenster)
 
 // Tarnung: Wie groß bzw. auffällig ist die Einheit (1 = Kampfpanzer im offenen Gelände)
-const SIZE: Record<Category, number> = { tank: 1, ifv: 0.9, apc: 0.85, recon: 0.6, infantry: 0.35, at: 0.3 };
+export const SIZE: Record<Category, number> = { tank: 1, ifv: 0.9, apc: 0.85, recon: 0.6, infantry: 0.35, at: 0.3 };
 // Deckung am Standort des Ziels
 const CONCEAL: Record<Terrain, number> = {
   open: 1, grass: 1, field: 0.95, road: 1, bridge: 1, rail: 0.9, water: 1,

@@ -8,7 +8,10 @@ import { buildNav } from './sim/nav';
 import { World, Unit } from './sim/world';
 import { buildSight, computeViewMap, VIEW_CELL } from './sim/vision';
 import { UnitView } from './render/units';
+import { drawFx } from './render/fx';
 import { CATEGORY_NAME } from './data/units';
+import { PINNED, menLeft } from './sim/combat';
+import { DUELS, setupDuel } from './sim/range';
 
 const $ = (id: string) => document.getElementById(id)!;
 const MAP_ID = 'ahrensfelde';
@@ -34,6 +37,7 @@ async function start() {
   const layers = drawMap(map);
   const paths = new Graphics();
   const unitLayer = new Container();
+  const fx = new Graphics();
 
   // Nebel des Krieges wie bei Broken Arrow: was eigene Einheiten sehen, bleibt hell, der Rest wird leicht abgedunkelt
   const fogN = Math.ceil(map.size / VIEW_CELL);
@@ -45,27 +49,38 @@ async function start() {
   const fog = new Sprite(fogTexture);
   fog.width = fog.height = fogN * VIEW_CELL;
   const viewMap = new Uint8Array(fogN * fogN);
-  layers.root.addChild(fog, paths, unitLayer);
+  layers.root.addChild(fog, paths, unitLayer, fx);
   app.stage.addChild(layers.root);
   const cam = createCamera(app.canvas, layers.root, map.size);
 
   // ---------- Welt und Einheiten ----------
   const world = new World(buildNav(map), map.size, buildSight(map));
-  BLUE_UNITS.forEach((id, i) => world.spawn(id, 'blue', BLUE_START.x + (i % 3) * 90, BLUE_START.y + Math.floor(i / 3) * 90, 0));
-  RED_UNITS.forEach((id, i) => world.spawn(id, 'red', RED_START.x + (i % 3) * 90, RED_START.y + Math.floor(i / 3) * 90, Math.PI));
   const views = new Map<number, UnitView>();
-  for (const u of world.units) {
-    const v = new UnitView(u);
-    views.set(u.id, v);
-    unitLayer.addChild(v.root);
-  }
+  const rebuildViews = () => {
+    for (const v of views.values()) v.root.destroy({ children: true });
+    views.clear();
+    for (const u of world.units) {
+      const v = new UnitView(u);
+      views.set(u.id, v);
+      unitLayer.addChild(v.root);
+    }
+  };
+  // Freies Gefecht: je Seite 6 Einheiten, die Gegner fahren auf eigene Faust herum und feuern zurück
+  const freeBattle = () => {
+    world.reset();
+    world.wander = true;
+    BLUE_UNITS.forEach((id, i) => world.spawn(id, 'blue', BLUE_START.x + (i % 3) * 90, BLUE_START.y + Math.floor(i / 3) * 90, 0));
+    RED_UNITS.forEach((id, i) => world.spawn(id, 'red', RED_START.x + (i % 3) * 90, RED_START.y + Math.floor(i / 3) * 90, Math.PI));
+    rebuildViews();
+  };
+  freeBattle();
 
   let selected: Unit[] = [];
   let fast = false;
   let revealAll = false;
   let fogTimer = 0;
   const updateFog = () => {
-    computeViewMap(world.sight, map.size, world.units.filter(u => u.side === 'blue'), viewMap);
+    computeViewMap(world.sight, map.size, world.units.filter(u => u.side === 'blue' && !u.dead), viewMap);
     for (let i = 0; i < viewMap.length; i++) fogImg.data.set(viewMap[i] ? [0, 0, 0, 0] : [10, 14, 20, 105], i * 4);
     fogCtx.putImageData(fogImg, 0, 0);
     fogTexture.source.update();
@@ -75,11 +90,21 @@ async function start() {
   let speedIndex = 0;
 
   function select(units: Unit[]) {
-    selected = units;
+    selected = units.filter(u => !u.dead);
     for (const v of views.values()) v.selected = selected.includes(v.unit);
     $('orders').hidden = selected.length === 0;
-    showCard(selected.length === 1 ? selected[0] : null, selected.length);
+    cardUnit = selected.length === 1 ? selected[0] : null;
+    showCard(cardUnit, selected.length);
+    updateFireButton();
   }
+  const updateFireButton = () => {
+    const hold = selected.length > 0 && selected.every(u => u.holdFire);
+    $('btn-fire').textContent = hold ? 'Feuer halten' : 'Feuer frei';
+    $('btn-fire').setAttribute('aria-pressed', String(hold));
+  };
+  let cardUnit: Unit | null = null;
+  let cardTimer = 0;
+  let feedShown = '';
 
   // ---------- Spielschleife ----------
   app.ticker.add(ticker => {
@@ -88,6 +113,18 @@ async function start() {
     fogTimer -= ticker.deltaMS;
     if (fogTimer <= 0) { fogTimer = 400; updateFog(); }
     for (const v of views.values()) v.update(cam.scale, world.time, revealAll);
+    drawFx(fx, world, cam.scale, revealAll);
+    if (selected.some(u => u.dead)) select(selected);
+    // Steckbrief und Gefechtsmeldungen regelmäßig auffrischen
+    cardTimer -= ticker.deltaMS;
+    if (cardTimer <= 0) {
+      cardTimer = 500;
+      if (cardUnit) showCard(cardUnit, 1);
+      const recent = world.events.filter(e => world.time - e.time < 15).slice(-4);
+      const html = recent.map(e => `<li class="ev-${e.side}">${e.text}</li>`).join('');
+      if (html !== feedShown) { $('feed').innerHTML = html; feedShown = html; }
+      $('feed').hidden = !recent.length;
+    }
     // Wege der ausgewählten Einheiten
     paths.clear();
     for (const u of selected) {
@@ -115,7 +152,12 @@ async function start() {
     const own = world.unitAt(x, y, radius, 'blue');
     if (own) { select(selected.length === 1 && selected[0] === own ? [] : [own]); return; }
     const enemy = world.unitAt(x, y, radius, 'red');
-    if (enemy && (enemy.spotted || revealAll)) { showCard(enemy, 1); return; }
+    if (enemy && (enemy.spotted || revealAll)) {
+      // Mit Auswahl: Ziel vorgeben; ohne Auswahl: Steckbrief des Gegners
+      if (selected.length) { world.attack(selected, enemy); flash(`Ziel: ${enemy.type.name}`); }
+      else { cardUnit = enemy; showCard(enemy, 1); }
+      return;
+    }
     if (selected.length) { world.order(selected, { x, y }, fast); return; }
     if (x < 0 || y < 0 || x > map.size || y > map.size) return;
     const t = TERRAIN_INFO[map.terrainAt(x, y)];
@@ -163,7 +205,13 @@ async function start() {
   };
   $('btn-move').addEventListener('click', () => setFast(false));
   $('btn-fast').addEventListener('click', () => setFast(true));
-  $('btn-stop').addEventListener('click', () => world.stop(selected));
+  $('btn-stop').addEventListener('click', () => { world.stop(selected); for (const u of selected) u.targetId = undefined; });
+  $('btn-fire').addEventListener('click', () => {
+    const hold = !selected.every(u => u.holdFire);
+    for (const u of selected) { u.holdFire = hold; if (hold) u.targetId = undefined; }
+    updateFireButton();
+    if (cardUnit) showCard(cardUnit, 1);
+  });
   $('btn-deselect').addEventListener('click', () => select([]));
   $('btn-speed').addEventListener('click', () => {
     speedIndex = (speedIndex + 1) % SPEEDS.length;
@@ -172,7 +220,8 @@ async function start() {
 
   $('btn-test').addEventListener('click', () => {
     const menu = $('test-menu');
-    menu.hidden = !menu.hidden;
+    menu.hidden = !menu.hidden || !$('duel-menu').hidden;
+    $('duel-menu').hidden = true;
     $('btn-test').setAttribute('aria-expanded', String(!menu.hidden));
   });
   $('btn-reveal').addEventListener('click', () => {
@@ -184,6 +233,38 @@ async function start() {
     $('btn-wander').setAttribute('aria-pressed', String(world.wander));
   });
 
+  // Schießstand: Duell wählen, die Kamera springt hin
+  const duelMenu = $('duel-menu');
+  DUELS.forEach(d => {
+    const b = document.createElement('button');
+    b.className = 'hud-btn';
+    b.type = 'button';
+    b.textContent = d.name;
+    b.addEventListener('click', () => {
+      select([]);
+      const { center } = setupDuel(world, d);
+      rebuildViews();
+      setWanderButton();
+      const s = app.screen.height / 1400;
+      cam.centerOn(center.x + (app.screen.width * 0.2) / s, center.y, s); // Bahn links im Bild
+      duelMenu.hidden = true;
+      $('test-menu').hidden = true;
+      flash(`Schießstand: ${d.name} auf ${d.dist} m`);
+    });
+    duelMenu.append(b);
+  });
+  $('btn-range').addEventListener('click', () => { duelMenu.hidden = false; $('test-menu').hidden = true; });
+  $('btn-range-back').addEventListener('click', () => { duelMenu.hidden = true; $('test-menu').hidden = false; });
+  $('btn-battle').addEventListener('click', () => {
+    select([]);
+    freeBattle();
+    setWanderButton();
+    $('test-menu').hidden = true;
+    cam.fit();
+    flash('Freies Gefecht: je 6 Einheiten, die Gegner feuern zurück');
+  });
+  const setWanderButton = () => $('btn-wander').setAttribute('aria-pressed', String(world.wander));
+
   $('btn-raster').addEventListener('click', () => {
     layers.raster.visible = !layers.raster.visible;
     $('btn-raster').setAttribute('aria-pressed', String(layers.raster.visible));
@@ -192,7 +273,7 @@ async function start() {
   cam.fit();
 
   // Nur im Entwicklungsmodus: Zugriff für automatische Tests
-  if (import.meta.env.DEV) Object.assign(window, { fl: { world, cam, select } });
+  if (import.meta.env.DEV) Object.assign(window, { fl: { world, cam, select, rebuildViews } });
 }
 
 // ---------- Steckbrief ----------
@@ -203,19 +284,28 @@ function showCard(u: Unit | null, count: number) {
     card.innerHTML = count ? `<h2>${count} Einheiten ausgewählt</h2><p class="sub">Ziel antippen zum Bewegen</p>` : '';
     return;
   }
-  const t = u.type, a = t.armor;
+  const t = u.type, a = t.armor, foot = t.mobility === 'foot', own = u.side === 'blue';
+  const state = u.dead ? (foot ? 'aufgerieben' : 'zerstört')
+    : foot ? `${menLeft(u)} von ${t.men} Soldaten` : `${Math.round((u.hp / u.maxHp) * 100)} %`;
+  const supp = u.dead ? '–' : u.retreating ? 'zieht sich zurück' : u.supp >= PINNED ? `niedergehalten (${Math.round(u.supp)})` : u.supp > 3 ? `${Math.round(u.supp)}` : 'keine';
+  const scroll = card.scrollTop;
   card.innerHTML = `
     <h2>${t.name}</h2>
-    <p class="sub"><span class="side-${u.side}">${u.side === 'blue' ? 'Bundeswehr' : 'Russland'}</span> · ${CATEGORY_NAME[t.category]}</p>
+    <p class="sub"><span class="side-${u.side}">${own ? 'Bundeswehr' : 'Russland'}</span> · ${CATEGORY_NAME[t.category]}</p>
     <dl>
+      <dt>Zustand</dt><dd>${state}</dd>
+      <dt>Unterdrückt</dt><dd>${supp}</dd>
+      ${own ? `<dt>Feuer</dt><dd>${u.holdFire ? 'halten' : 'frei'}${u.targetId != null ? ' · Ziel vorgegeben' : ''}</dd>` : ''}
       <dt>Tempo</dt><dd>${t.roadSpeed} km/h Straße, ${t.offroadSpeed} km/h Gelände</dd>
       <dt>Gerade</dt><dd id="card-speed">steht</dd>
       <dt>Besatzung</dt><dd>${t.men}${t.transport ? ` + ${t.transport} Plätze` : ''}</dd>
-      <dt>Panzerung</dt><dd>${t.mobility === 'foot' ? 'keine' : `vorn ${a.front} · Seite ${a.side} · Heck ${a.rear} mm`}</dd>
+      <dt>Panzerung</dt><dd>${foot ? 'keine' : `vorn ${a.front} · Seite ${a.side} · Heck ${a.rear} · Dach ${a.top} mm`}</dd>
       <dt>Sichtweite</dt><dd>${(t.optics / 1000).toLocaleString('de-DE')} km</dd>
     </dl>
-    <ul>${t.weapons.map(w => `<li>${w.name}: ${(w.range / 1000).toLocaleString('de-DE')} km, Durchschlag ${w.penetration} mm</li>`).join('')}</ul>`;
+    <ul>${t.weapons.map((w, i) => `<li>${w.name}: ${(w.range / 1000).toLocaleString('de-DE')} km, Durchschlag ${w.penetration} mm${w.topAttack ? ' (von oben)' : ''}${own ? ` · <b>${u.weapons[i].ammo}/${w.ammo}</b>` : ''}</li>`).join('')}</ul>`;
+  card.scrollTop = scroll;
   card.hidden = false;
+  updateCardSpeed(u);
 }
 function updateCardSpeed(u: Unit) {
   const el = document.getElementById('card-speed');

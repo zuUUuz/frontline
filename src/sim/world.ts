@@ -2,7 +2,8 @@
 
 import { UnitType, unitType } from '../data/units';
 import { NavGrid, NAV_CELL, findPath, freeAt, nearestPassable, segmentFree, speedAt } from './nav';
-import { SightGrid, canSpot } from './vision';
+import { SightGrid, canSpot, sightDistance } from './vision';
+import { CombatEvent, Impact, PINNED, Projectile, WeaponState, initCombat, updateCombat } from './combat';
 
 export type Side = 'blue' | 'red'; // blau = eigene Seite, rot = Gegner
 
@@ -22,6 +23,20 @@ export interface Unit {
   spotted: boolean;      // nur Gegner: gerade von einer eigenen Einheit gesehen
   lastSeen?: { x: number; y: number; time: number }; // nur Gegner: letzte bekannte Position (Spielzeit in s)
   wanderAt?: number;     // nur Gegner im Testmodus: wann der nächste Bewegungsbefehl kommt
+  wandering?: boolean;   // fährt gerade im Testmodus herum (nicht auf Befehl)
+  // ---------- Kampf ----------
+  hp: number;            // Lebenspunkte (Infanterie: Soldaten)
+  maxHp: number;
+  dead?: boolean;        // zerstört bzw. aufgerieben (bleibt als Wrack liegen)
+  supp: number;          // Unterdrückung 0..100
+  suppAt?: number;       // Spielzeit des letzten Beschusses
+  weapons: WeaponState[]; // Nachladen und Munition je Waffe
+  holdFire?: boolean;    // „Feuer halten“: schießt nur auf befohlenes Ziel
+  targetId?: number;     // befohlenes Ziel
+  duelWith?: number;     // Schießstand: schießt nur auf diesen Gegner
+  revealedUntil?: number; // hat geschossen und ist bis dahin für den Gegner sichtbar
+  lastHitFrom?: { x: number; y: number };
+  retreating?: boolean;
 }
 
 const SPOT_INTERVAL = 0.25; // so oft (Spielsekunden) wird neu geprüft, wer wen sieht
@@ -49,6 +64,10 @@ export class World {
   units: Unit[] = [];
   time = 0; // Spielzeit in Sekunden
   wander = true; // Gegner bewegen sich zum Testen auf eigene Faust
+  projectiles: Projectile[] = [];
+  impacts: Impact[] = [];
+  events: CombatEvent[] = [];
+  combatTimer = 0;
   private nextId = 1;
   private spotTimer = 0;
 
@@ -57,13 +76,40 @@ export class World {
   spawn(typeId: string, side: Side, x: number, y: number, heading = 0) {
     const type = unitType(typeId);
     const p = nearestPassable(this.nav, type.mobility, x, y) ?? { x, y };
-    const unit: Unit = { id: this.nextId++, type, side, x: p.x, y: p.y, heading, path: [], fast: false, speed: 0, stuck: 0, spotted: false };
+    const unit = { id: this.nextId++, type, side, x: p.x, y: p.y, heading, path: [], fast: false, speed: 0, stuck: 0, spotted: false } as unknown as Unit;
+    initCombat(unit);
     this.units.push(unit);
     return unit;
   }
 
   // Bewegungsbefehl für eine Gruppe: Ziele nebeneinander quer zur Marschrichtung
+  // Alles abräumen (Schießstand, neues Gefecht)
+  reset() {
+    this.units = [];
+    this.projectiles = [];
+    this.impacts = [];
+    this.events = [];
+  }
+
+  log(text: string, side: Side) {
+    this.events.push({ time: this.time, text, side });
+    if (this.events.length > 40) this.events.shift();
+  }
+
+  // Ziel vorgeben: diese Einheiten schießen zuerst darauf (auch bei „Feuer halten“)
+  attack(units: Unit[], target: Unit) {
+    for (const u of units) u.targetId = target.id;
+  }
+
+  // Rückzug: schnell weg von der Gefahr
+  retreat(u: Unit, to: { x: number; y: number }) {
+    this.order([u], to, true);
+    u.retreating = true;
+    u.targetId = undefined;
+  }
+
   order(units: Unit[], target: { x: number; y: number }, fast: boolean) {
+    units = units.filter(u => !u.dead);
     if (!units.length) return;
     const cx = units.reduce((s, u) => s + u.x, 0) / units.length;
     const cy = units.reduce((s, u) => s + u.y, 0) / units.length;
@@ -80,6 +126,8 @@ export class World {
       while (path.length > 1 && Math.hypot(path[0].x - u.x, path[0].y - u.y) < 12) path.shift();
       u.path = path;
       u.fast = fast;
+      u.wandering = false;
+      u.retreating = false;
     });
   }
 
@@ -92,7 +140,10 @@ export class World {
     this.spotTimer -= dt;
     if (this.spotTimer <= 0) { this.spotTimer = SPOT_INTERVAL; this.updateSpotting(); }
     if (this.wander) this.wanderEnemies();
+    updateCombat(this, dt);
+    this.impacts = this.impacts.filter(i => this.time - i.time < 1.5);
     for (const u of this.units) {
+      if (u.dead) continue;
       const mob = u.type.mobility;
       let want = 0; // gewünschte Geschwindigkeit in m/s
       // Erreichte Wegpunkte abhaken: alle, die näher als der Vorausblick liegen (außer dem Ziel)
@@ -194,25 +245,34 @@ export class World {
   }
 
   // Wer sieht wen? Gegner sind entdeckt, solange mindestens eine eigene Einheit sie sieht
+  // Beide Seiten: eine Einheit ist entdeckt, solange ein Gegner sie sieht – oder sie gerade geschossen hat
+  // und ein Gegner freie Sicht auf sie hat (Mündungsfeuer)
   private updateSpotting() {
-    const blue = this.units.filter(u => u.side === 'blue');
-    for (const r of this.units) {
-      if (r.side !== 'red') continue;
-      r.spotted = blue.some(b => canSpot(this.sight, b, r));
-      if (r.spotted) r.lastSeen = { x: r.x, y: r.y, time: this.time };
+    for (const u of this.units) {
+      if (u.dead) { u.spotted = false; continue; }
+      const enemies = this.units.filter(e => e.side !== u.side && !e.dead);
+      u.spotted = enemies.some(e => canSpot(this.sight, e, u));
+      if (!u.spotted && this.time < (u.revealedUntil ?? 0)) {
+        u.spotted = enemies.some(e => {
+          const d = Math.hypot(e.x - u.x, e.y - u.y);
+          return d <= e.type.optics && sightDistance(this.sight, e.x, e.y, u.x, u.y, e.type.optics) <= e.type.optics;
+        });
+      }
+      if (u.spotted) u.lastSeen = { x: u.x, y: u.y, time: this.time };
     }
   }
 
   // Testmodus: Gegner fahren ab und zu ein Stück in ihrer Umgebung herum
   private wanderEnemies() {
     for (const u of this.units) {
-      if (u.side !== 'red' || u.path.length) continue;
+      if (u.side !== 'red' || u.path.length || u.dead || u.duelWith != null) continue;
       u.wanderAt ??= this.time + WANDER.pauseMin * Math.random();
       if (this.time < u.wanderAt) continue;
       const a = Math.random() * Math.PI * 2, r = WANDER.radius * (0.4 + 0.6 * Math.random());
       const goal = { x: clamp(u.x + Math.cos(a) * r, 50, this.size - 50), y: clamp(u.y + Math.sin(a) * r, 50, this.size - 50) };
       u.path = findPath(this.nav, u, goal, { mobility: u.type.mobility, preferRoads: false }) ?? [];
       u.fast = false;
+      u.wandering = true;
       u.wanderAt = this.time + WANDER.pauseMin + Math.random() * (WANDER.pauseMax - WANDER.pauseMin);
     }
   }
@@ -223,14 +283,16 @@ export class World {
     const f = speedAt(this.nav, mob, u.x, u.y);
     const road = this.nav.road[Math.floor(u.y / NAV_CELL) * this.nav.w + Math.floor(u.x / NAV_CELL)] === 1;
     const kmh = road ? t.roadSpeed * ROAD_SPEED[mob] : Math.min(t.offroadSpeed, t.roadSpeed * Math.max(f, 0.15)) * GAME_SPEED[mob];
-    return (kmh / 3.6) * (u.fast ? 1 : CAUTIOUS[mob]);
+    // Beschädigte Fahrzeuge sind langsamer, niedergehaltene Infanterie kriecht
+    const damage = mob === 'foot' ? (u.supp >= PINNED && !u.retreating ? 0.4 : 1) : 0.5 + 0.5 * u.hp / u.maxHp;
+    return (kmh / 3.6) * (u.fast ? 1 : CAUTIOUS[mob]) * damage;
   }
 
   // Einheit an einer Stelle (für Antippen); radius in Metern
   unitAt(x: number, y: number, radius: number, side?: Side) {
     let best: Unit | null = null, bestD = radius;
     for (const u of this.units) {
-      if (side && u.side !== side) continue;
+      if (u.dead || (side && u.side !== side)) continue;
       const d = Math.hypot(u.x - x, u.y - y);
       if (d < bestD) { best = u; bestD = d; }
     }

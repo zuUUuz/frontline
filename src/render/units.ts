@@ -4,6 +4,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import type { Unit } from '../sim/world';
 import type { Category } from '../data/units';
+import { PINNED, menLeft } from '../sim/combat';
 
 const SIDE = {
   blue: { frame: 0x80d4ff, edge: 0x0b2a3a, tint: 0x3d8fd1, hull: 0x5b6644 },
@@ -25,6 +26,9 @@ export class UnitView {
   private ring = new Graphics();
   private label: Text;
   private ghostLabel: Text;
+  private status = new Graphics(); // Zustand und Unterdrückung als kleine Balken
+  private wasDead = false;
+  private drawnMen = 0;
   selected = false;
 
   constructor(readonly unit: Unit) {
@@ -38,19 +42,22 @@ export class UnitView {
     this.ghostLabel.position.set(0, -17);
     this.symbol.addChild(this.symbolGfx, this.label, this.ghostLabel);
     this.body.addChild(this.bodyGfx);
-    this.root.addChild(this.ring, this.body, this.symbol);
+    this.root.addChild(this.ring, this.body, this.symbol, this.status);
   }
 
   // Jedes Bild: Position, Drehung, Detailstufe je Zoom; Gegner nur, wenn entdeckt (sonst Geist)
   update(scale: number, time: number, revealAll: boolean) {
     const u = this.unit, t = u.type;
-    const seen = u.side === 'blue' || u.spotted || revealAll;
+    if (u.dead && !this.wasDead) this.markDead();
+    if (t.mobility === 'foot' && !u.dead && menLeft(u) !== this.drawnMen) this.drawBody(); // Gefallene verschwinden
+    // Wracks bleiben liegen; gegnerische nur, wenn man sie schon einmal gesehen hat
+    const seen = u.side === 'blue' || u.spotted || revealAll || (!!u.dead && !!u.lastSeen);
     const ghost = !seen && !!u.lastSeen;
     this.root.visible = seen || ghost;
     if (!this.root.visible) return;
     const pos = ghost ? u.lastSeen! : u;
     this.root.position.set(pos.x, pos.y);
-    this.root.alpha = ghost ? 0.45 : u.side === 'red' && !u.spotted ? 0.6 : 1;
+    this.root.alpha = ghost ? 0.45 : u.dead ? 0.75 : u.side === 'red' && !u.spotted ? 0.6 : 1;
     this.ghostLabel.text = ghost ? `vor ${formatAge(time - u.lastSeen!.time)}` : '';
     const isFoot = t.mobility === 'foot';
     const close = !ghost && (isFoot ? scale >= INFANTRY_MIN_SCALE : t.length * scale >= VEHICLE_MIN_PX);
@@ -58,11 +65,37 @@ export class UnitView {
     this.symbol.visible = !close;
     this.body.rotation = u.heading;
     this.symbol.scale.set(1 / scale);
+    this.drawStatus(scale, close, ghost);
     this.ring.clear();
-    if (this.selected) {
+    if (this.selected && !u.dead) {
       if (close) this.ring.circle(0, 0, Math.max(t.length, t.width) * 0.75).stroke({ width: 2 / scale, color: SELECT });
       else this.ring.roundRect(-20 / scale, -15 / scale, 40 / scale, 30 / scale, 3 / scale).stroke({ width: 2.5 / scale, color: SELECT });
     }
+  }
+
+  // Balken über der Einheit: grün/gelb/rot = Zustand, orange = Unterdrückung (nur wenn etwas los ist)
+  private drawStatus(scale: number, close: boolean, ghost: boolean) {
+    const u = this.unit, g = this.status;
+    g.clear();
+    this.status.scale.set(1 / scale);
+    const hurt = u.hp < u.maxHp, supp = u.supp > 3;
+    if (u.dead || ghost || (!hurt && !supp && !this.selected)) return;
+    const y = close ? -Math.max(u.type.length, u.type.width) * 0.6 * scale - 10 : -22;
+    const f = u.hp / u.maxHp;
+    g.rect(-15, y, 30, 4).fill(0x101010);
+    g.rect(-15, y, 30 * f, 4).fill(f > 0.6 ? 0x6ccf5a : f > 0.3 ? 0xe8c84a : 0xe0503c);
+    if (supp) {
+      g.rect(-15, y + 5, 30, 3).fill(0x101010);
+      g.rect(-15, y + 5, 30 * u.supp / 100, 3).fill(u.supp >= PINNED ? 0xff5a1f : 0xf0a040);
+    }
+  }
+
+  private markDead() {
+    this.wasDead = true;
+    this.body.tint = 0x4a4a46;
+    this.symbol.tint = 0x777777;
+    this.label.text = `${this.unit.type.name} ✕`;
+    this.ghostLabel.text = '';
   }
 
   // ---------- NATO-Symbol ----------
@@ -80,9 +113,11 @@ export class UnitView {
   private drawBody() {
     const g = this.bodyGfx, t = this.unit.type, c = SIDE[this.unit.side];
     const L = t.length, W = t.width;
+    g.clear();
     if (t.mobility === 'foot') {
       // Soldaten in lockerer Keilformation
-      for (let i = 0; i < t.men; i++) {
+      this.drawnMen = menLeft(this.unit);
+      for (let i = 0; i < this.drawnMen; i++) {
         const row = Math.floor((i + 1) / 2), sideSign = i % 2 ? 1 : -1;
         const x = -row * 2.2, y = i === 0 ? 0 : sideSign * (1.2 + row * 0.9);
         g.circle(x, y, 0.6).fill(c.hull).stroke({ width: 0.25, color: c.tint });

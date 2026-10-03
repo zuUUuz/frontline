@@ -190,6 +190,7 @@ function drawIcon(g: Graphics, cat: Category, wheeled: boolean, k: number) {
     case 'tank': track(); break;
     case 'heli': g.poly([-9 * k, -6 * k, 9 * k, 6 * k, 9 * k, -6 * k, -9 * k, 6 * k]).fill(INK); break; // Drehflügler
     case 'jet': g.moveTo(-10 * k, 4 * k).lineTo(0, -6 * k).lineTo(10 * k, 4 * k).stroke(s); g.moveTo(0, -6 * k).lineTo(0, 7 * k).stroke(s); break;
+    case 'supply': g.moveTo(-w, 0).lineTo(w, 0).stroke(s); wheels(); break; // Versorgung
     case 'aa': g.arc(0, 5 * k, 9 * k, Math.PI, 0).stroke(s); g.moveTo(-10 * k, 5 * k).lineTo(10 * k, 5 * k).stroke(s); break;
     case 'artillery': g.circle(0, 0, 3.2 * k).fill(INK); if (wheeled) wheels(); else track(0.8); break; // APP-6: Punkt = Steilfeuer
     case 'ifv': X(); track(0.7); break;

@@ -6,6 +6,7 @@ import { SightGrid, canSpot, sightDistance } from './vision';
 import { CombatEvent, Impact, PINNED, Projectile, WeaponState, initCombat, updateCombat } from './combat';
 import { Mission, Shell, updateArtillery } from './artillery';
 import { Sortie, updateJets } from './airstrike';
+import { updateSupply } from './supply';
 
 export type Side = 'blue' | 'red'; // blau = eigene Seite, rot = Gegner
 
@@ -52,6 +53,7 @@ export interface Unit {
   // ---------- Artillerie ----------
   mission?: Mission;     // laufender Feuerauftrag
   smokeAmmo: number;     // Rauchgranaten
+  supplyLeft: number;    // Versorgungsfahrzeug: verbleibende Nachschubpunkte
 }
 
 const SPOT_INTERVAL = 0.25; // so oft (Spielsekunden) wird neu geprüft, wer wen sieht
@@ -83,6 +85,7 @@ export class World {
   wander = true; // Gegner bewegen sich zum Testen auf eigene Faust
   projectiles: Projectile[] = [];
   shells: Shell[] = [];   // Artilleriegranaten im Flug
+  depots?: Record<Side, { x: number; y: number }[]>; // Nachschubpunkte am Kartenrand (im Gefecht)
   impacts: Impact[] = [];
   events: CombatEvent[] = [];
   combatTimer = 0;
@@ -107,6 +110,7 @@ export class World {
     this.projectiles = [];
     this.journal = [];
     this.shells = [];
+    this.depots = undefined;
     this.sight.smoke = [];
     this.impacts = [];
     this.events = [];
@@ -230,6 +234,7 @@ export class World {
     updateCombat(this, dt);
     updateArtillery(this, dt);
     updateJets(this, dt);
+    updateSupply(this, dt, this.depots);
     this.impacts = this.impacts.filter(i => this.time - i.time < 1.5);
     this.updateTransport();
     for (const u of this.units) {

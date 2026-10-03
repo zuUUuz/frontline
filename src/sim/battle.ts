@@ -34,6 +34,7 @@ export class Battle {
   // aiEconomy: Faktor auf Start- und laufende Kommandopunkte der KI (Schwierigkeit)
   constructor(readonly world: World, readonly sc: Scenario, aiSides: Side[] = ['red'], readonly aiEconomy = 1) {
     for (const side of aiSides) this.ai[side] = new Commander(this, side);
+    world.depots = sc.entries; // an den Anmarschpunkten gibt es Nachschub
     this.sectors = sc.sectors.map(s => ({ ...s, owner: null, contested: false, progress: 0, capturer: null, present: { blue: 0, red: 0 } }));
     this.n = Math.ceil(world.size / SECTOR_CELL);
     this.sectorOf = new Uint8Array(this.n * this.n);

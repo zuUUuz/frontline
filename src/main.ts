@@ -16,6 +16,7 @@ import { SectorView } from './render/sectors';
 import { PINNED, menLeft } from './sim/combat';
 import { DUELS, setupDuel } from './sim/range';
 import { isArtillery, orderFire } from './sim/artillery';
+import { SUPPLY_RANGE } from './sim/supply';
 import { isJet, jetGoto, jetReturn, jetStrike, launchJet } from './sim/airstrike';
 
 const $ = (id: string) => document.getElementById(id)!;
@@ -210,6 +211,8 @@ async function start() {
     // Wege der ausgewählten Einheiten
     paths.clear();
     for (const u of selected) {
+      // Versorgungs-LKW: Reichweite als Kreis
+      if (u.type.supply) paths.circle(u.x, u.y, SUPPLY_RANGE).stroke({ width: 1.5 / cam.scale, color: 0x9be37a, alpha: 0.7 });
       // Jet: Linie zum Flug- bzw. Bombenziel
       if (u.sortie?.phase === 'flying') {
         const s = u.sortie;
@@ -607,6 +610,7 @@ function showCard(u: Unit | null, _count: number) {
   const html = `
     <h2><span class="side-${u.side}">■</span> ${t.name} <button class="card-more" type="button" data-more>${cardDetails ? 'weniger' : 'Details'}</button></h2>
     <p class="sub">${CATEGORY_NAME[t.category]} · ${state}${supp}${fire}</p>
+    ${t.supply ? `<p class="ammo">Vorrat ${Math.floor(u.supplyLeft)} von ${t.supply} · versorgt bis ${SUPPLY_RANGE} m (beide stehen)</p>` : ''}
     ${ammo ? `<p class="ammo">${ammo}</p>` : ''}${t.transport ? `<p class="ammo">${u.cargo.length ? `an Bord: ${u.cargo.map(p => `${p.type.name} (${menLeft(p)})`).join(', ')}` : `leer · ${t.transport} Plätze`}</p>` : ''}${details}`;
   card.hidden = false;
   if (html === cardShown) return; // nur bei Änderung neu aufbauen, sonst gehen Fingertipps verloren

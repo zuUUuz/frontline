@@ -11,6 +11,7 @@ import { Position, findPositions } from './positions';
 import { NAV_CELL } from './nav';
 import { isArtillery, orderFire } from './artillery';
 import { callStrike, isJet } from './airstrike';
+import { needsSupply } from './supply';
 
 const MEMORY = 90;          // so lange (s) merkt sich die KI gesichtete Gegner
 const SCOUT_RANGE = 700;    // so nah muss eine Einheit an der Sektormitte gewesen sein, damit er als aufgeklärt gilt
@@ -46,7 +47,7 @@ const dist = (a: P, b: P) => Math.hypot(a.x - b.x, a.y - b.y);
 export class Commander {
   private groups: Group[] = [];
   private garrison = new Map<Unit, Sector>();
-  private retreating = new Set<Unit>();
+  private retreating = new Map<Unit, number>(); // zum Versorgen bzw. Reparieren zurückgezogen (seit)
   private dest = new Map<Unit, P>();
   private scouted = new Map<Sector, number>();
   private queue: Category[] = [...OPENING];
@@ -68,7 +69,8 @@ export class Commander {
     const all = w.units.filter(u => u.side === this.side && !u.dead && !u.carrier);
     const guns = all.filter(isArtillery);
     const jets = all.filter(isJet);
-    const mine = all.filter(u => !isArtillery(u) && !isJet(u)); // Artillerie und Jets werden getrennt geführt
+    const trucks = all.filter(u => !!u.type.supply);
+    const mine = all.filter(u => !isArtillery(u) && !isJet(u) && !u.type.supply); // Artillerie, Jets und LKW werden getrennt geführt
     // Aufgeklärt ist, wo eigene Einheiten in der Nähe sind
     for (const s of b.sectors) if (mine.some(u => dist(u, s) < Math.min(SCOUT_RANGE, u.type.optics))) this.scouted.set(s, now);
     for (const g of this.groups) g.units = g.units.filter(u => !u.dead);
@@ -89,6 +91,7 @@ export class Commander {
     this.idle(mine);
     this.fireSupport(guns, mine);
     this.airStrikes(jets, mine);
+    this.runTrucks(trucks);
     // Wer in Stellung liegt, schießt erst, wenn der Gegner nah genug ist (Hinterhalt)
     for (const u of mine) u.ambush = this.posted.has(u) && !u.path.length;
   }
@@ -352,6 +355,7 @@ export class Commander {
         : guns < (this.w.time > 420 ? 2 : 1) && gunsLeft && this.w.time > 90 ? ['artillery']
         : enemyAir && has('aa') < 2 && left('aa') ? ['aa']
         : this.w.time > 240 && has('jet') < 1 && left('jet') ? ['jet']
+        : this.w.time > 180 && has('supply') < 1 && left('supply') ? ['supply']
         : [...this.nextPackage()];
     }
     const cat = this.queue[0];
@@ -408,13 +412,37 @@ export class Commander {
   }
 
   // ---------- Angeschlagene Fahrzeuge zurück ----------
+  // Angeschlagene Fahrzeuge und Leergeschossene (Hauptwaffen ohne Munition) zum Versorgen zurück:
+  // zum Versorgungs-LKW, sonst zum Nachschubpunkt am Kartenrand
   private withdrawDamaged(mine: Unit[]) {
     for (const u of mine) {
-      if (u.type.mobility === 'foot' || this.retreating.has(u) || u.hp / u.maxHp >= RETREAT_HP) continue;
+      if (this.retreating.has(u)) continue;
+      const damaged = u.type.mobility !== 'foot' && u.hp / u.maxHp < RETREAT_HP;
+      const main = u.type.weapons.map((w, i) => ({ w, s: u.weapons[i] })).filter(x => x.w.kind !== 'mg' && x.w.kind !== 'rifle' && x.w.kind !== 'artillery');
+      const empty = main.length > 0 && main.every(x => x.s.ammo === 0);
+      if (!damaged && !empty) continue;
       this.release(u);
-      this.retreating.add(u);
-      this.move(u, this.home, true, true);
+      this.retreating.set(u, this.w.time);
+      this.move(u, this.supplyPoint(), true, true);
+      this.note(`${u.type.id} ${damaged ? 'angeschlagen' : 'leergeschossen'} → zum Versorgen`);
       if (u.spotted) this.w.log(`${u.type.name} (Gegner) setzt sich angeschlagen ab`, this.side === 'red' ? 'blue' : 'red', true);
+    }
+  }
+
+  // Wo werden Einheiten versorgt? Beim LKW (falls einer mit Vorrat da ist), sonst am Kartenrand
+  private supplyPoint(): P {
+    const t = this.w.units.find(u => u.side === this.side && !u.dead && u.type.supply && u.supplyLeft > 100);
+    return t ? jitter(t, 30, t.id) : this.home;
+  }
+
+  // LKW stehen hinter dem vordersten Sektor; mit wenig Vorrat holen sie am Kartenrand Nachschub
+  private runTrucks(trucks: Unit[]) {
+    const front = this.frontline();
+    const spot = towards(front, this.home, Math.min(300, dist(front, this.home) * 0.5));
+    for (const t of trucks) {
+      if (t.supplyLeft < 80) { this.move(t, this.home, true); continue; }
+      if (t.supplyLeft < (t.type.supply ?? 0) && dist(t, this.home) < 150) continue; // wird gerade aufgefüllt
+      this.move(t, jitter(spot, 40, t.id), true);
     }
   }
 
@@ -568,7 +596,8 @@ export class Commander {
       else if (dist(u, front) > 250) this.move(u, jitter(front, 150, u.id), true);
     }
     // Abgesetzte Fahrzeuge, die daheim angekommen sind, stehen wieder zur Verfügung (wenn auch angeschlagen)
-    for (const u of [...this.retreating]) if (!u.path.length && dist(u, this.home) < 150) this.retreating.delete(u);
+    // Versorgt (oder zu lange gewartet): wieder einsatzbereit
+    for (const [u, since] of [...this.retreating]) if (u.dead || (!u.path.length && !needsSupply(u)) || this.w.time - since > 240) this.retreating.delete(u);
   }
 
   private release(u: Unit) {

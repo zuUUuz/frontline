@@ -3,7 +3,7 @@
 // Neue Einheit = neuer Eintrag hier.
 
 export type Faction = 'bw' | 'ru';
-export type Category = 'tank' | 'ifv' | 'apc' | 'recon' | 'infantry' | 'at' | 'artillery' | 'heli' | 'jet' | 'aa';
+export type Category = 'tank' | 'ifv' | 'apc' | 'recon' | 'infantry' | 'at' | 'artillery' | 'heli' | 'jet' | 'aa' | 'supply';
 export type Mobility = 'tracked' | 'wheeled' | 'foot';
 
 export interface Weapon {
@@ -40,6 +40,7 @@ export interface UnitType {
   air?: 'heli' | 'jet'; // fliegt: Hubschrauber (tief, direkt, ohne Wege) oder Jet (Anflug von außerhalb)
   radar?: number;       // Luftraumüberwachung: entdeckt Luftfahrzeuge in diesem Umkreis auch ohne Sicht
   bombs?: { count: number; lethal: number; spread: number }; // Jet: Bomben je Einsatz
+  supply?: number;      // Versorgungsfahrzeug: Nachschubpunkte an Bord
 }
 
 // Steilfeuer: Feuerauftrag auf einen Punkt, ohne Sichtlinie
@@ -55,6 +56,20 @@ export interface Artillery {
 }
 
 export const UNIT_TYPES: UnitType[] = [
+  // ---------- Nachschub ----------
+  {
+    id: 'zetros', name: 'Versorgungs-LKW (Zetros)', faction: 'bw', category: 'supply', mobility: 'wheeled',
+    roadSpeed: 90, offroadSpeed: 50, length: 8, width: 2.6, men: 2, supply: 800,
+    armor: { front: 8, side: 6, rear: 5, top: 4 }, cost: 40, optics: 1200,
+    weapons: [{ name: 'MG3 (Lafette)', kind: 'mg', range: 800, penetration: 5, reload: 2, ammo: 40, speed: 850 }],
+  },
+  {
+    id: 'kamaz', name: 'Versorgungs-LKW (KamAZ-5350)', faction: 'ru', category: 'supply', mobility: 'wheeled',
+    roadSpeed: 90, offroadSpeed: 45, length: 8, width: 2.5, men: 2, supply: 800,
+    armor: { front: 6, side: 5, rear: 4, top: 3 }, cost: 35, optics: 1100,
+    weapons: [{ name: 'PKM (Lafette)', kind: 'mg', range: 800, penetration: 5, reload: 2, ammo: 40, speed: 850 }],
+  },
+
   // ---------- Luft ----------
   {
     id: 'tiger', name: 'Tiger UHT', faction: 'bw', category: 'heli', mobility: 'tracked', air: 'heli',
@@ -271,4 +286,5 @@ export const CATEGORY_NAME: Record<Category, string> = {
   tank: 'Kampfpanzer', ifv: 'Schützenpanzer', apc: 'Transportpanzer', recon: 'Aufklärung', infantry: 'Infanterie', at: 'Panzerabwehr',
   artillery: 'Artillerie',
   heli: 'Hubschrauber', jet: 'Kampfflugzeug', aa: 'Luftabwehr',
+  supply: 'Nachschub',
 };

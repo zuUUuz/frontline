@@ -8,7 +8,7 @@ import type { Unit, World } from './world';
 type Kind = Weapon['kind'];
 
 // Lebenspunkte je Fahrzeugart; Infanterie hat so viele, wie sie Soldaten hat
-export const MAX_HP: Record<Category, number> = { tank: 10, ifv: 6, apc: 5, recon: 3, infantry: 0, at: 0, artillery: 4, heli: 4, jet: 5, aa: 4 };
+export const MAX_HP: Record<Category, number> = { tank: 10, ifv: 6, apc: 5, recon: 3, infantry: 0, at: 0, artillery: 4, heli: 4, jet: 5, aa: 4, supply: 3 };
 
 // Grund-Trefferchance auf kurze Entfernung
 const BASE_HIT: Record<Kind, number> = { ke: 0.9, atgm: 0.92, heat: 0.6, autocannon: 0.7, mg: 0.6, rifle: 0.5, artillery: 0 , aa: 0 };
@@ -61,6 +61,7 @@ export function initCombat(u: Unit) {
   u.supp = 0;
   u.weapons = u.type.weapons.map(w => ({ cool: Math.random() * 2, ammo: w.ammo, inFlight: false }));
   u.smokeAmmo = u.type.artillery?.smoke ?? 0;
+  u.supplyLeft = u.type.supply ?? 0;
 }
 
 const isFoot = (u: Unit) => u.type.mobility === 'foot';
@@ -144,7 +145,7 @@ function effect(weapon: Weapon, u: Unit, e: Unit, d: number) {
 
 // Gefährliche Ziele zuerst
 function priority(e: Unit) {
-  const p: Record<Category, number> = { tank: 3, ifv: 2.5, at: 2.5, apc: 1.5, infantry: 1.5, recon: 1.2, artillery: 2.5, heli: 3.5, jet: 3, aa: 2.5 };
+  const p: Record<Category, number> = { tank: 3, ifv: 2.5, at: 2.5, apc: 1.5, infantry: 1.5, recon: 1.2, artillery: 2.5, heli: 3.5, jet: 3, aa: 2.5, supply: 1.8 };
   // Feuer bündeln: Angeschlagene zuerst erledigen
   return p[e.type.category] * (1 + 0.6 * (1 - e.hp / e.maxHp));
 }

@@ -129,7 +129,7 @@ export class Commander {
       this.release(u);
       this.retreating.add(u);
       this.move(u, this.home, true, true);
-      if (u.spotted) this.w.log(`${u.type.name} (Gegner) setzt sich angeschlagen ab`, this.side === 'red' ? 'blue' : 'red');
+      if (u.spotted) this.w.log(`${u.type.name} (Gegner) setzt sich angeschlagen ab`, this.side === 'red' ? 'blue' : 'red', true);
     }
   }
 

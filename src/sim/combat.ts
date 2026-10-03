@@ -44,7 +44,7 @@ export interface Projectile {
 }
 
 export interface Impact { x: number; y: number; time: number; kind: 'pen' | 'bounce' | 'miss' | 'kill' | 'muzzle'; shooter?: Unit }
-export interface CombatEvent { time: number; text: string; side: 'blue' | 'red' }
+export interface CombatEvent { time: number; text: string; side: 'blue' | 'red'; major: boolean }
 
 export interface WeaponState { cool: number; ammo: number; inFlight: boolean }
 
@@ -243,7 +243,7 @@ function suppress(w: World, e: Unit, amount: number, fromX?: number, fromY?: num
   if (isFoot(e) && e.supp >= RETREAT && !e.retreating && e.lastHitFrom) {
     const a = Math.atan2(e.y - e.lastHitFrom.y, e.x - e.lastHitFrom.x);
     w.retreat(e, { x: e.x + Math.cos(a) * 150, y: e.y + Math.sin(a) * 150 });
-    w.log(`${e.type.name} zieht sich zurück`, e.side);
+    w.log(`${e.type.name} zieht sich zurück`, e.side, true);
   }
 }
 
@@ -253,5 +253,5 @@ function kill(w: World, e: Unit, text: string) {
   e.path = [];
   e.speed = 0;
   w.impacts.push({ x: e.x, y: e.y, time: w.time, kind: 'kill' });
-  w.log(text, e.side);
+  w.log(text, e.side, true);
 }

@@ -87,10 +87,22 @@ async function start() {
     $('reinf').hidden = $('end').hidden = true;
     deployId = null;
   };
+  // Schwierigkeit: Faktor auf die Kommandopunkte der KI; gemerkt im Browser
+  const LEVELS = [{ name: 'Leicht', eco: 0.8 }, { name: 'Normal', eco: 1.3 }, { name: 'Schwer', eco: 1.7 }];
+  let level = 1;
+  try { const v = Number(localStorage.getItem('fl-level')); if (v >= 0 && v < LEVELS.length) level = v; } catch { /* egal */ }
+  const showLevel = () => { for (const id of ['btn-level', 'btn-end-level']) $(id).textContent = `Schwierigkeit: ${LEVELS[level].name}`; };
+  const cycleLevel = () => {
+    level = (level + 1) % LEVELS.length;
+    try { localStorage.setItem('fl-level', String(level)); } catch { /* egal */ }
+    showLevel();
+    flash(`Schwierigkeit ${LEVELS[level].name} – gilt ab dem nächsten Gefecht`);
+  };
   const startBattle = () => {
     world.reset();
     world.wander = false;
-    setBattle(new Battle(world, AHRENSFELDE));
+    setBattle(new Battle(world, AHRENSFELDE, ['red'], LEVELS[level].eco));
+    showLevel();
     syncViews();
     setSpeed(0);
     flash('Pause: Kaufe über „Verstärkung“ deine ersten Einheiten, dann Tempo antippen', 7000);
@@ -159,7 +171,7 @@ async function start() {
     if (cardTimer <= 0) {
       cardTimer = 500;
       if (cardUnit) showCard(cardUnit, 1);
-      const recent = world.events.filter(e => world.time - e.time < 15).slice(-4);
+      const recent = world.events.filter(e => e.major && world.time - e.time < 10).slice(-3);
       const html = recent.map(e => `<li class="ev-${e.side}">${e.text}</li>`).join('');
       if (html !== feedShown) { $('feed').innerHTML = html; feedShown = html; }
       $('feed').hidden = !recent.length;
@@ -291,6 +303,8 @@ async function start() {
     $('reinf').hidden = true;
     flash(`Ziel antippen: ${unitType(id).name} kommt vom westlichen Kartenrand`, 6000);
   });
+  $('btn-level').addEventListener('click', cycleLevel);
+  $('btn-end-level').addEventListener('click', cycleLevel);
   $('btn-end-restart').addEventListener('click', () => { select([]); startBattle(); cam.fit(); });
 
   let hudTimer = 0;

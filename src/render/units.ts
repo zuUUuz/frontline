@@ -64,7 +64,9 @@ export class UnitView {
     this.body.visible = close;
     this.symbol.visible = !close;
     this.body.rotation = u.heading;
-    this.symbol.scale.set(1 / scale);
+    // Weit herausgezoomt: kleinere Symbole, Namen nur bei Auswahl (sonst zu voll)
+    this.symbol.scale.set((scale < 0.4 ? 0.75 : 1) / scale);
+    this.label.visible = this.selected || scale >= 0.6 || ghost;
     this.drawStatus(scale, close, ghost);
     this.ring.clear();
     if (this.selected && !u.dead) {

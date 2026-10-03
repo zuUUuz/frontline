@@ -24,7 +24,7 @@ export class SectorView {
     sprite.width = sprite.height = n * SECTOR_CELL;
     this.root.addChild(sprite);
     for (const s of battle.sectors) {
-      const t = new Text({ text: s.name, style: { fontFamily: 'system-ui, sans-serif', fontSize: 13, fontWeight: '700', fill: 0xf4f4e8, stroke: { color: 0x101010, width: 4 }, align: 'center' } });
+      const t = new Text({ text: s.name, style: { fontFamily: 'system-ui, sans-serif', fontSize: 11, fontWeight: '700', fill: 0xf4f4e8, stroke: { color: 0x101010, width: 4 }, align: 'center' } });
       t.anchor.set(0.5);
       t.position.set(s.x, s.y);
       this.labels.push(t);
@@ -38,7 +38,9 @@ export class SectorView {
       const t = this.labels[i];
       t.scale.set(1 / scale);
       const state = s.contested ? 'umkämpft' : s.capturer ? `${s.capturer === 'blue' ? 'wir nehmen' : 'Gegner nimmt'} ${Math.round(s.progress * 100)} %` : s.owner === 'blue' ? 'unser' : s.owner === 'red' ? 'Gegner' : 'neutral';
-      t.text = `${s.name}\n${state}`;
+      // Status nur zeigen, wenn dort etwas passiert
+      t.text = s.contested || s.capturer ? `${s.name}\n${state}` : s.name;
+      t.alpha = s.contested || s.capturer ? 1 : 0.75;
       t.style.fill = s.owner === 'blue' ? 0xb8e0ff : s.owner === 'red' ? 0xffc0b8 : 0xf4f4e8;
     });
     // Fläche nur neu malen, wenn sich Besitz oder Kampflage ändert

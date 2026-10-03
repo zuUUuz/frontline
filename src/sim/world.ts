@@ -92,8 +92,9 @@ export class World {
     this.events = [];
   }
 
-  log(text: string, side: Side) {
-    this.events.push({ time: this.time, text, side });
+  // major: wichtige Meldung (Verlust, Sektorwechsel, Rückzug) – nur die erscheinen im Spiel
+  log(text: string, side: Side, major = false) {
+    this.events.push({ time: this.time, text, side, major });
     if (this.events.length > 40) this.events.shift();
   }
 

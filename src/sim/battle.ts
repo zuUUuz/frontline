@@ -31,7 +31,8 @@ export class Battle {
   private aiTimer = 0;
   private aiSaving: string | null = null;
 
-  constructor(readonly world: World, readonly sc: Scenario, aiSides: Side[] = ['red']) {
+  // aiEconomy: Faktor auf Start- und laufende Kommandopunkte der KI (Schwierigkeit)
+  constructor(readonly world: World, readonly sc: Scenario, aiSides: Side[] = ['red'], readonly aiEconomy = 1) {
     for (const side of aiSides) this.ai[side] = new Commander(this, side);
     this.sectors = sc.sectors.map(s => ({ ...s, owner: null, contested: false, progress: 0, capturer: null, present: { blue: 0, red: 0 } }));
     this.n = Math.ceil(world.size / SECTOR_CELL);
@@ -42,10 +43,12 @@ export class Battle {
       this.sectors.forEach((s, k) => { const d = (s.x - x) ** 2 + (s.y - y) ** 2; if (d < bestD) { bestD = d; best = k; } });
       this.sectorOf[j * this.n + i] = best;
     }
-    this.points = { blue: sc.startPoints, red: sc.startPoints };
+    const eco = (s: Side) => (this.ai[s] ? aiEconomy : 1);
+    this.points = { blue: sc.startPoints * eco('blue'), red: sc.startPoints * eco('red') };
     this.left = {
-      blue: new Map(sc.decks.blue.map(c => [c.unit, c.count])),
-      red: new Map(sc.decks.red.map(c => [c.unit, c.count])),
+      // Die KI bekommt auf höheren Stufen auch entsprechend mehr Einheiten im Deck
+      blue: new Map(sc.decks.blue.map(c => [c.unit, Math.round(c.count * eco('blue'))])),
+      red: new Map(sc.decks.red.map(c => [c.unit, Math.round(c.count * eco('red'))])),
     };
   }
 
@@ -87,13 +90,13 @@ export class Battle {
       s.progress += dt / CAPTURE_TIME;
       if (s.progress >= 1) {
         s.owner = side; s.progress = 0; s.capturer = null;
-        this.world.log(`${side === 'blue' ? 'Wir halten' : 'Gegner hält'} jetzt ${s.name}`, side === 'blue' ? 'red' : 'blue');
+        this.world.log(`${side === 'blue' ? 'Wir halten' : 'Gegner hält'} jetzt ${s.name}`, side === 'blue' ? 'red' : 'blue', true);
       }
     }
     for (const side of ['blue', 'red'] as Side[]) {
       const held = this.held(side);
       this.score[side] += held * this.sc.scorePerSector * dt;
-      this.points[side] += (this.sc.income + held * this.sc.incomePerSector) * dt;
+      this.points[side] += (this.sc.income + held * this.sc.incomePerSector) * dt * (this.ai[side] ? this.aiEconomy : 1);
     }
     if (this.score.blue >= this.sc.winScore || this.score.red >= this.sc.winScore) {
       this.winner = this.score.blue >= this.score.red ? 'blue' : 'red';

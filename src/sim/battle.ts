@@ -4,10 +4,11 @@
 import type { Scenario } from '../data/scenario';
 import { unitType } from '../data/units';
 import type { Side, Unit, World } from './world';
+import { Commander } from './ai';
 
 export const SECTOR_CELL = 16; // Auflösung der Sektorkarte in Metern
 const CAPTURE_TIME = 8;        // Sekunden ungestörter Anwesenheit, bis ein Sektor wechselt
-const AI_THINK = 4;            // so oft entscheidet die Platzhalter-KI (Spielsekunden)
+const AI_THINK = 3;            // so oft entscheidet die KI (Spielsekunden)
 
 export interface Sector {
   name: string; x: number; y: number;
@@ -26,10 +27,12 @@ export class Battle {
   points: Record<Side, number>;
   left: Record<Side, Map<string, number>>; // noch verfügbare Einheiten im Deck
   winner: Side | null = null;
+  ai: Partial<Record<Side, Commander>> = {};
   private aiTimer = 0;
   private aiSaving: string | null = null;
 
-  constructor(readonly world: World, readonly sc: Scenario) {
+  constructor(readonly world: World, readonly sc: Scenario, aiSides: Side[] = ['red']) {
+    for (const side of aiSides) this.ai[side] = new Commander(this, side);
     this.sectors = sc.sectors.map(s => ({ ...s, owner: null, contested: false, progress: 0, capturer: null, present: { blue: 0, red: 0 } }));
     this.n = Math.ceil(world.size / SECTOR_CELL);
     this.sectorOf = new Uint8Array(this.n * this.n);
@@ -96,12 +99,12 @@ export class Battle {
       this.winner = this.score.blue >= this.score.red ? 'blue' : 'red';
     }
     this.aiTimer -= dt;
-    if (this.aiTimer <= 0) { this.aiTimer = AI_THINK; this.placeholderAi('red'); }
+    if (this.aiTimer <= 0) { this.aiTimer = AI_THINK; for (const c of Object.values(this.ai)) c.think(); }
   }
 
-  // Platzhalter-KI: kauft, was sie sich leisten kann, und schickt freie Einheiten zum nächsten Sektor,
-  // der ihr nicht gehört. Kein Aufklären, keine Gruppen – das kommt in Schritt 5b.
-  private placeholderAi(side: Side) {
+  // Einfache KI (nur noch zum Vergleich in Tests): kauft zufällig und schickt freie Einheiten
+  // zum nächsten Sektor, der ihr nicht gehört. Die richtige KI steht in ai.ts.
+  simpleAi(side: Side) {
     const w = this.world;
     const mine = w.units.filter(u => u.side === side && !u.dead);
     const targets = this.sectors.filter(s => s.owner !== side || s.contested);

@@ -121,3 +121,12 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 .end-box { background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; padding: 18px 24px; text-align: center; max-width: 80vw; }
 .end-box h1 { margin: 0 0 6px; font-size: 28px; }
 .end-box p { margin: 0 0 14px; color: var(--muted); }
+
+/* Kompakter Steckbrief */
+.card { width: auto; max-width: min(300px, 42vw); padding: 6px 10px; }
+.card h2 { font-size: 14px; display: flex; align-items: center; gap: 6px; }
+.card .sub { margin: 0; font-size: 12px; }
+.card .ammo { margin: 2px 0 0; font-size: 11px; color: var(--muted); }
+.card dl { margin: 6px 0 4px; font-size: 12px; }
+.card ul { font-size: 12px; }
+.card-more { margin-left: auto; font: 600 11px var(--font); color: var(--muted); background: none; border: 1px solid var(--edge); border-radius: 3px; padding: 2px 6px; cursor: pointer; }

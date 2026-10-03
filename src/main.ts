@@ -174,7 +174,6 @@ async function start() {
       const end = u.path[u.path.length - 1];
       paths.circle(end.x, end.y, 5 / cam.scale).fill({ color: 0xffe066, alpha: 0.9 });
     }
-    if (selected.length === 1) updateCardSpeed(selected[0]);
   });
 
   // ---------- Maßstab ----------
@@ -250,6 +249,11 @@ async function start() {
   };
   $('btn-move').addEventListener('click', () => setFast(false));
   $('btn-fast').addEventListener('click', () => setFast(true));
+  $('card').addEventListener('pointerdown', e => {
+    if (!(e.target as HTMLElement).closest('[data-more]')) return;
+    cardDetails = !cardDetails;
+    if (cardUnit) showCard(cardUnit, 1);
+  });
   $('btn-stop').addEventListener('click', () => { world.stop(selected); for (const u of selected) u.targetId = undefined; });
   $('btn-fire').addEventListener('click', () => {
     const hold = !selected.every(u => u.holdFire);
@@ -379,39 +383,37 @@ async function start() {
 }
 
 // ---------- Steckbrief ----------
-function showCard(u: Unit | null, count: number) {
+// Kompakt: Name, Zustand, Feuer, Munition. Alle Werte erst über „Details“.
+let cardDetails = false;
+let cardShown = '';
+function showCard(u: Unit | null, _count: number) {
   const card = $('card');
-  if (!u) {
-    card.hidden = count === 0;
-    card.innerHTML = count ? `<h2>${count} Einheiten ausgewählt</h2><p class="sub">Ziel antippen zum Bewegen</p>` : '';
-    return;
-  }
+  if (!u) { card.hidden = true; cardShown = ''; return; } // bei Mehrfachauswahl reicht die Befehlsleiste
   const t = u.type, a = t.armor, foot = t.mobility === 'foot', own = u.side === 'blue';
   const state = u.dead ? (foot ? 'aufgerieben' : 'zerstört')
-    : foot ? `${menLeft(u)} von ${t.men} Soldaten` : `${Math.round((u.hp / u.maxHp) * 100)} %`;
-  const supp = u.dead ? '–' : u.retreating ? 'zieht sich zurück' : u.supp >= PINNED ? `niedergehalten (${Math.round(u.supp)})` : u.supp > 3 ? `${Math.round(u.supp)}` : 'keine';
-  const scroll = card.scrollTop;
-  card.innerHTML = `
-    <h2>${t.name}</h2>
-    <p class="sub"><span class="side-${u.side}">${own ? 'Bundeswehr' : 'Russland'}</span> · ${CATEGORY_NAME[t.category]}</p>
+    : foot ? `${menLeft(u)}/${t.men} Mann` : `${Math.round((u.hp / u.maxHp) * 100)} %`;
+  const supp = u.dead ? '' : u.retreating ? ' · zieht sich zurück' : u.supp >= PINNED ? ' · niedergehalten' : u.supp > 3 ? ` · unterdrückt ${Math.round(u.supp)}` : '';
+  const fire = own && !u.dead ? ` · Feuer ${u.holdFire ? 'halten' : 'frei'}${u.targetId != null ? ' (Ziel)' : ''}` : '';
+  const ammo = own ? t.weapons.map((w, i) => `${shortName(w.name)} ${u.weapons[i].ammo}`).join(' · ') : '';
+  const details = cardDetails ? `
     <dl>
-      <dt>Zustand</dt><dd>${state}</dd>
-      <dt>Unterdrückt</dt><dd>${supp}</dd>
-      ${own ? `<dt>Feuer</dt><dd>${u.holdFire ? 'halten' : 'frei'}${u.targetId != null ? ' · Ziel vorgegeben' : ''}</dd>` : ''}
       <dt>Tempo</dt><dd>${t.roadSpeed} km/h Straße, ${t.offroadSpeed} km/h Gelände</dd>
-      <dt>Gerade</dt><dd id="card-speed">steht</dd>
       <dt>Besatzung</dt><dd>${t.men}${t.transport ? ` + ${t.transport} Plätze` : ''}</dd>
       <dt>Panzerung</dt><dd>${foot ? 'keine' : `vorn ${a.front} · Seite ${a.side} · Heck ${a.rear} · Dach ${a.top} mm`}</dd>
       <dt>Sichtweite</dt><dd>${(t.optics / 1000).toLocaleString('de-DE')} km</dd>
     </dl>
-    <ul>${t.weapons.map((w, i) => `<li>${w.name}: ${(w.range / 1000).toLocaleString('de-DE')} km, Durchschlag ${w.penetration} mm${w.topAttack ? ' (von oben)' : ''}${own ? ` · <b>${u.weapons[i].ammo}/${w.ammo}</b>` : ''}</li>`).join('')}</ul>`;
-  card.scrollTop = scroll;
+    <ul>${t.weapons.map((w, i) => `<li>${w.name}: ${(w.range / 1000).toLocaleString('de-DE')} km, Durchschlag ${w.penetration} mm${w.topAttack ? ' (von oben)' : ''}${own ? ` · ${u.weapons[i].ammo}/${w.ammo}` : ''}</li>`).join('')}</ul>` : '';
+  const html = `
+    <h2><span class="side-${u.side}">■</span> ${t.name} <button class="card-more" type="button" data-more>${cardDetails ? 'weniger' : 'Details'}</button></h2>
+    <p class="sub">${CATEGORY_NAME[t.category]} · ${state}${supp}${fire}</p>
+    ${ammo ? `<p class="ammo">${ammo}</p>` : ''}${details}`;
   card.hidden = false;
-  updateCardSpeed(u);
+  if (html === cardShown) return; // nur bei Änderung neu aufbauen, sonst gehen Fingertipps verloren
+  cardShown = html;
+  card.innerHTML = html;
 }
-function updateCardSpeed(u: Unit) {
-  const el = document.getElementById('card-speed');
-  if (el) el.textContent = u.speed > 0.1 ? `${Math.round(u.speed * 3.6)} km/h${u.fast ? ' (schnell)' : ''}` : 'steht';
+function shortName(name: string) {
+  return name.replace(/\s*\(.*\)/, '').replace(/^(\d+ mm).*$/, '$1').replace(/ \/.*$/, '');
 }
 
 let flashTimer = 0;

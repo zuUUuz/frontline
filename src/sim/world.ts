@@ -38,6 +38,7 @@ export interface Unit {
   lastHitFrom?: { x: number; y: number };
   retreating?: boolean;
   lastShot?: number;     // Spielzeit des letzten eigenen Schusses
+  ambush?: boolean;      // liegt im Hinterhalt: schießt erst, wenn der Gegner nah ist (KI)
 }
 
 const SPOT_INTERVAL = 0.25; // so oft (Spielsekunden) wird neu geprüft, wer wen sieht
@@ -110,7 +111,7 @@ export class World {
     u.targetId = undefined;
   }
 
-  order(units: Unit[], target: { x: number; y: number }, fast: boolean) {
+  order(units: Unit[], target: { x: number; y: number }, fast: boolean, danger?: Float32Array) {
     units = units.filter(u => !u.dead);
     if (!units.length) return;
     const cx = units.reduce((s, u) => s + u.x, 0) / units.length;
@@ -123,7 +124,7 @@ export class World {
       const spacing = u.type.mobility === 'foot' ? 20 : 35;
       const offset = (i - (sorted.length - 1) / 2) * spacing;
       const goal = { x: clamp(target.x + px * offset, 0, this.size), y: clamp(target.y + py * offset, 0, this.size) };
-      const path = findPath(this.nav, u, goal, { mobility: u.type.mobility, preferRoads: fast }) ?? [];
+      const path = findPath(this.nav, u, goal, { mobility: u.type.mobility, preferRoads: fast, danger }) ?? [];
       // Wegpunkte direkt bei der Einheit weglassen, sonst dreht sie erst einmal um
       while (path.length > 1 && Math.hypot(path[0].x - u.x, path[0].y - u.y) < 12) path.shift();
       u.path = path;

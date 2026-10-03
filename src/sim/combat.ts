@@ -29,6 +29,8 @@ const SUPPRESS_DECAY = 8;    // pro Sekunde, sobald 3 s Ruhe ist
 export const PINNED = 70;    // ab hier schießt Infanterie nicht mehr und kriecht nur
 const RETREAT = 95;          // ab hier zieht sich Infanterie zurück
 const REVEAL: Record<Kind, number> = { ke: 6, atgm: 6, heat: 5, autocannon: 5, mg: 3, rifle: 3 }; // Sekunden sichtbar nach Schuss
+// Hinterhalt: erst schießen, wenn das Ziel so nah ist (Anteil der Reichweite bzw. Meter) – oder man selbst beschossen wird
+const AMBUSH_RANGE: Record<Kind, number> = { ke: 1800, atgm: 2000, heat: 1, autocannon: 1200, mg: 0.7, rifle: 0.8 };
 const THINK = 0.1;           // so oft wird über Ziele entschieden (Spielsekunden)
 const LINE_OF_FIRE_SLACK = 100; // so viel „Sichtkosten“ (Gebüsch, Waldrand) darf zwischen Schütze und Ziel sein
 
@@ -90,6 +92,8 @@ function think(w: World, u: Unit) {
     }
     return lof.get(e)!;
   };
+  // Hinterhalt gilt, solange man nicht entdeckt/beschossen ist und noch nicht selbst gefeuert hat
+  const ambushing = !!u.ambush && !forced && w.time - (u.suppAt ?? -99) > 10 && w.time - (u.lastShot ?? -99) > 8;
   let engaged = false;
   u.type.weapons.forEach((weapon, i) => {
     const st = u.weapons[i];
@@ -99,6 +103,7 @@ function think(w: World, u: Unit) {
     for (const e of forced ? [forced] : enemies) {
       const d = Math.hypot(e.x - u.x, e.y - u.y);
       if (d > weapon.range) continue;
+      if (ambushing) { const a = AMBUSH_RANGE[weapon.kind]; if (d > (a <= 1 ? a * weapon.range : a)) continue; }
       const score = effect(weapon, u, e, d) * priority(e) / (1 + d / 1000);
       if (score > bestScore && canFireAt(e)) { best = e; bestScore = score; }
     }
@@ -128,7 +133,8 @@ function effect(weapon: Weapon, u: Unit, e: Unit, d: number) {
 // Gefährliche Ziele zuerst
 function priority(e: Unit) {
   const p: Record<Category, number> = { tank: 3, ifv: 2.5, at: 2.5, apc: 1.5, infantry: 1.5, recon: 1.2 };
-  return p[e.type.category];
+  // Feuer bündeln: Angeschlagene zuerst erledigen
+  return p[e.type.category] * (1 + 0.6 * (1 - e.hp / e.maxHp));
 }
 
 function penetration(weapon: Weapon, d: number) {

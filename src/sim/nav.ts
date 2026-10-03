@@ -139,6 +139,7 @@ class Heap {
 export interface PathOptions {
   mobility: Mobility;
   preferRoads: boolean; // „Schnell bewegen“: Straßen bevorzugen
+  danger?: Float32Array; // je Navigationszelle: wie sehr der Gegner hier hinsieht (macht Zellen teurer, KI)
 }
 
 const cellOf = (nav: NavGrid, x: number, y: number) =>
@@ -172,7 +173,8 @@ export function findPath(nav: NavGrid, from: { x: number; y: number }, to: { x: 
   const start = cellOf(nav, from.x, from.y), goal = cellOf(nav, goalPt.x, goalPt.y);
   // Kosten einer Zelle: Zeit pro Meter; bei „Schnell“ kosten Nicht-Straßen extra
   const pen = nav.penalty[opt.mobility];
-  const cost = (i: number) => (1 / Math.max(s[i], 0.05)) * (opt.preferRoads && !nav.road[i] ? 1.25 : 1) * (1 + pen[i]);
+  const dg = opt.danger;
+  const cost = (i: number) => (1 / Math.max(s[i], 0.05)) * (opt.preferRoads && !nav.road[i] ? 1.25 : 1) * (1 + pen[i]) * (dg ? 1 + dg[i] : 1);
   const g = new Float32Array(nav.w * nav.h).fill(Infinity);
   const came = new Int32Array(nav.w * nav.h).fill(-1);
   const closed = new Uint8Array(nav.w * nav.h);
@@ -219,7 +221,8 @@ export function findPath(nav: NavGrid, from: { x: number; y: number }, to: { x: 
 function smooth(nav: NavGrid, opt: PathOptions, pts: { x: number; y: number }[]) {
   const s = nav.speed[opt.mobility], pen = nav.penalty[opt.mobility];
   const half = opt.mobility === 'foot' ? 1 : 3; // halbe Breite plus etwas Luft, in Metern
-  const cellCost = (c: number) => (1 / Math.max(s[c], 0.05)) * (opt.preferRoads && !nav.road[c] ? 1.25 : 1) * (1 + pen[c]);
+  const dg = opt.danger;
+  const cellCost = (c: number) => (1 / Math.max(s[c], 0.05)) * (opt.preferRoads && !nav.road[c] ? 1.25 : 1) * (1 + pen[c]) * (dg ? 1 + dg[c] : 1);
   const lineCost = (a: { x: number; y: number }, b: { x: number; y: number }) => {
     const len = Math.hypot(b.x - a.x, b.y - a.y), steps = Math.max(1, Math.ceil(len / 2));
     const nx = len ? -(b.y - a.y) / len : 0, ny = len ? (b.x - a.x) / len : 0;

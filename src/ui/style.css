@@ -136,3 +136,9 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 .card dl { margin: 6px 0 4px; font-size: 12px; }
 .card ul { font-size: 12px; }
 .card-more { margin-left: auto; font: 600 11px var(--font); color: var(--muted); background: none; border: 1px solid var(--edge); border-radius: 3px; padding: 2px 6px; cursor: pointer; }
+
+/* Gefechtsbericht */
+.report { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(10, 12, 10, 0.6); z-index: 6; padding: 10px; }
+.report-box { display: flex; flex-direction: column; gap: 6px; width: min(900px, 96vw); height: calc(100dvh - 30px); max-height: calc(100vh - 30px); background: var(--panel); border: 1px solid var(--edge); border-radius: 6px; padding: 8px; }
+.report-head { display: flex; align-items: center; gap: 6px; }
+.report textarea { flex: 1; width: 100%; resize: none; background: #11140f; color: var(--text); border: 1px solid var(--edge); border-radius: 4px; font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 6px; }

@@ -1,7 +1,7 @@
 // Gefechtsregeln: Sektoren erobern, Siegpunkte, Kommandopunkte und Verstärkung aus dem Deck.
 // Dazu eine einfache Platzhalter-KI für die Gegenseite (die richtige KI kommt in Schritt 5b).
 
-import { Card, Scenario, cardCost, cardKey } from '../data/scenario';
+import { Card, Scenario, cardCost, cardKey, cardName } from '../data/scenario';
 import type { Side, Unit, World } from './world';
 import { Commander } from './ai';
 import { parkJet } from './airstrike';
@@ -58,6 +58,17 @@ export class Battle {
     return this.sectors[this.sectorOf[j * this.n + i]];
   }
 
+  // Zwischenstand: Punkte, Sektoren, Kommandopunkte, lebende Einheiten je Seite
+  snapshot() {
+    const alive = (side: Side) => {
+      const n = new Map<string, number>();
+      for (const u of this.world.units) if (u.side === side && !u.dead && !u.offmap) n.set(u.type.id, (n.get(u.type.id) ?? 0) + 1);
+      return [...n].map(([id, k]) => `${id}×${k}`).join(' ');
+    };
+    const sectors = this.sectors.map(s => `${s.name}:${s.contested ? 'umkämpft' : s.owner === 'blue' ? 'BW' : s.owner === 'red' ? 'RU' : '-'}`).join(', ');
+    return `STAND Punkte BW ${Math.floor(this.score.blue)} : RU ${Math.floor(this.score.red)} · KP ${Math.floor(this.points.blue)} : ${Math.floor(this.points.red)} · ${sectors}\n      BW: ${alive('blue')}\n      RU: ${alive('red')}`;
+  }
+
   held(side: Side) { return this.sectors.filter(s => s.owner === side && !s.contested).length; }
 
   card(side: Side, key: string): Card | undefined { return this.sc.decks[side].find(c => cardKey(c) === key); }
@@ -76,6 +87,7 @@ export class Battle {
     this.left[side].set(key, this.left[side].get(key)! - 1);
     const entries = this.sc.entries[side];
     const e = entries.reduce((a, b) => (Math.hypot(b.x - dest.x, b.y - dest.y) < Math.hypot(a.x - dest.x, a.y - dest.y) ? b : a));
+    this.world.note(`[${side === 'blue' ? 'BW' : 'RU'}] kauft ${cardName(c)} (${cardCost(c)} KP, Rest ${Math.floor(this.points[side])})`);
     const u = this.world.spawn(c.unit, side, e.x, e.y, side === 'blue' ? 0 : Math.PI);
     if (c.passengers) this.world.mount(this.world.spawn(c.passengers, side, e.x, e.y), u);
     if (u.type.air === 'jet') parkJet(u); // Jets warten außerhalb der Karte auf ihren Einsatz
@@ -108,6 +120,8 @@ export class Battle {
     if (this.score.blue >= this.sc.winScore || this.score.red >= this.sc.winScore) {
       this.winner = this.score.blue >= this.score.red ? 'blue' : 'red';
     }
+    // Jede Minute ein Zwischenstand für den Bericht
+    if (Math.floor(this.world.time / 60) !== Math.floor((this.world.time - dt) / 60)) this.world.note(this.snapshot());
     this.aiTimer -= dt;
     if (this.aiTimer <= 0) { this.aiTimer = AI_THINK; for (const c of Object.values(this.ai)) c.think(); }
   }

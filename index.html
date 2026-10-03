@@ -27,6 +27,7 @@
     <button class="hud-btn" id="btn-raster" type="button" aria-pressed="false">Gelände-Raster</button>
     <button class="hud-btn" id="btn-newbattle" type="button">Neues Gefecht</button>
     <button class="hud-btn" id="btn-level" type="button">Schwierigkeit: Normal</button>
+    <button class="hud-btn" id="btn-report" type="button">Gefechtsbericht</button>
     <button class="hud-btn" id="btn-fastforward" type="button" aria-pressed="false">Zeitraffer 10×</button>
     <button class="hud-btn" id="btn-battle" type="button">Sandkasten 6 gegen 6</button>
     <button class="hud-btn" id="btn-range" type="button">Schießstand ▸</button>
@@ -45,9 +46,18 @@
     <h2>Verstärkung <span class="sub">Karte wählen, dann Ziel antippen</span></h2>
     <div class="reinf-list" id="reinf-list"></div>
   </section>
+  <div class="report" id="report" hidden>
+    <div class="report-box">
+      <div class="report-head"><b>Gefechtsbericht</b><span class="spacer"></span>
+        <button class="hud-btn" id="btn-report-copy" type="button">Kopieren</button>
+        <button class="hud-btn" id="btn-report-close" type="button">✕</button></div>
+      <textarea id="report-text" readonly></textarea>
+    </div>
+  </div>
   <div class="end" id="end" hidden>
     <div class="end-box"><h1 id="end-title"></h1><p id="end-text"></p>
       <button class="hud-btn" id="btn-end-level" type="button">Schwierigkeit: Normal</button>
+      <button class="hud-btn" id="btn-end-report" type="button">Gefechtsbericht</button>
       <button class="hud-btn" id="btn-end-restart" type="button">Neues Gefecht</button></div>
   </div>
   <div class="box-layer" id="box-layer" hidden><div class="box" id="box" hidden></div></div>

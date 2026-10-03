@@ -105,6 +105,7 @@ export class World {
   reset() {
     this.units = [];
     this.projectiles = [];
+    this.journal = [];
     this.shells = [];
     this.sight.smoke = [];
     this.impacts = [];
@@ -115,6 +116,15 @@ export class World {
   log(text: string, side: Side, major = false) {
     this.events.push({ time: this.time, text, side, major });
     if (this.events.length > 40) this.events.shift();
+    this.note(text);
+  }
+
+  // Gefechtsbericht: alles Wichtige mit Spielzeit (zum Auswerten nach dem Gefecht)
+  journal: string[] = [];
+  note(text: string) {
+    const t = Math.floor(this.time);
+    this.journal.push(`${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')} ${text}`);
+    if (this.journal.length > 4000) this.journal.shift();
   }
 
   // Ziel vorgeben: diese Einheiten schießen zuerst darauf (auch bei „Feuer halten“)

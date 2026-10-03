@@ -166,6 +166,8 @@ export class Commander {
     else { this.posted.delete(u); this.move(u, jitter(s, 120, u.id), true); }
   }
 
+  private note(text: string) { this.w.note(`[KI ${this.side === 'red' ? 'RU' : 'BW'}] ${text}`); }
+
   // ---------- Was weiß die KI über den Gegner? ----------
   threatIn(s: Sector) {
     let v = 0;
@@ -203,7 +205,7 @@ export class Commander {
       if (dist(g, base) > 400) { this.move(g, base, true); continue; }
       const t = this.pickFireTarget(g, mine);
       if (!t) continue;
-      if (orderFire(this.w, [g], t.x, t.y, t.smoke)) this.fired.set(t.key, now);
+      if (orderFire(this.w, [g], t.x, t.y, t.smoke)) { this.fired.set(t.key, now); this.note(`${g.type.id}: ${t.smoke ? 'Rauch' : 'Feuer'} auf ${Math.round(t.x)},${Math.round(t.y)} (${t.key.replace(/[\d,]+$/, '')})`); }
     }
   }
 
@@ -257,7 +259,7 @@ export class Commander {
     if (defended && c.v < 350) return;
     if (mine.some(u => dist(u, c) < 80)) return; // nicht auf eigene Leute
     const target = known.find(e => dist(e.lastSeen!, c) < 60 && e.spotted);
-    callStrike(this.w, ready[0], c.x, c.y, target);
+    if (callStrike(this.w, ready[0], c.x, c.y, target)) this.note(`${ready[0].type.id}: Luftangriff auf ${target?.type.id ?? 'Ansammlung'} (Wert ${Math.round(c.v)}${defended ? ', trotz Flugabwehr' : ''})`);
   }
 
   // Dichteste Ansammlung bekannter Gegner (Mitte und Wert im Umkreis von 60 m)
@@ -495,6 +497,7 @@ export class Commander {
     }
     // Leerer Sektor: ohne Sammeln direkt hin
     this.groups.push({ units, target, rally, staging, phase: need ? 'gather' : 'assault', since: this.w.time, startValue: v });
+    this.note(`neue Gruppe → ${target.name} (${units.map(u => u.type.id).join(', ')}; Stärke ${Math.round(v)}, nötig ${Math.round(need)}, bekannter Feind ${Math.round(this.threatIn(target))})`);
   }
 
   // Wie viel Kampfkraft braucht ein Angriff? 0 = Sektor scheint leer, eine Einheit reicht
@@ -513,6 +516,7 @@ export class Commander {
       const v = g.units.reduce((a, u) => a + value(u), 0);
       // Zu große Verluste oder der Gegner ist stärker als gedacht: abbrechen und zurück
       if (!g.units.length || v < g.startValue * 0.35 || v < this.need(g.target) * 0.7) {
+        this.note(`Angriff auf ${g.target.name} abgebrochen (Stärke ${Math.round(v)} von ${Math.round(g.startValue)}, nötig ${Math.round(this.need(g.target))})`);
         for (const u of g.units) this.move(u, g.rally, true, true);
         return false;
       }
@@ -520,15 +524,16 @@ export class Commander {
       if (g.target.owner === this.side && !g.target.contested) {
         const stay = g.units.filter(u => u.type.mobility === 'foot').slice(0, 2);
         for (const u of stay) { this.garrison.set(u, g.target); this.occupy(u, g.target); }
+        this.note(`${g.target.name} genommen (${g.units.length} Einheiten übrig)`);
         return false;
       }
       const near = (p: P, r: number) => g.units.filter(u => dist(u, p) < r).length / g.units.length;
       if (g.phase === 'gather') {
         for (const u of g.units) this.move(u, jitter(g.rally, 100, u.id), true);
-        if (near(g.rally, 250) >= 0.75 || now - g.since > 40) { g.phase = 'stage'; g.since = now; }
+        if (near(g.rally, 250) >= 0.75 || now - g.since > 40) { g.phase = 'stage'; g.since = now; this.note(`Gruppe → ${g.target.name}: Bereitstellung`); }
       } else if (g.phase === 'stage') {
         for (const u of g.units) this.move(u, jitter(g.staging, 90, u.id), true);
-        if (near(g.staging, 200) >= 0.7 || now - g.since > 35) { g.phase = 'assault'; g.since = now; }
+        if (near(g.staging, 200) >= 0.7 || now - g.since > 35) { g.phase = 'assault'; g.since = now; this.note(`Gruppe → ${g.target.name}: Sturm (bekannter Feind ${Math.round(this.threatIn(g.target))})`); }
       } else {
         // Verbundene Waffen: Infanterie stürmt, Schützen- und Transportpanzer folgen dicht dahinter,
         // Kampfpanzer und Panzerabwehr geben aus dem Bereitstellungsraum Feuerschutz, bis der Sektor frei ist

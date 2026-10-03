@@ -254,6 +254,7 @@ async function start() {
       // Gegner angetippt: Angriff; sonst hinfliegen und kreisen (aufklären). Danach ist der Jet ausgewählt.
       const jet = strikeJet;
       if (launchJet(world, jet, t?.x ?? x, t?.y ?? y, !!t, t)) {
+        world.note(`[BW] ${jet.type.id} startet → ${t ? 'Angriff auf ' + t.type.id : `Punkt ${Math.round(x)},${Math.round(y)}`}`);
         syncViews();
         flash(`${jet.type.name} fliegt an – ${t ? `Angriff auf ${t.type.name}` : 'kreist über dem Punkt'}`);
         select([jet]);
@@ -267,6 +268,7 @@ async function start() {
       const t = target && (target.spotted || revealAll) ? target : undefined;
       const jets = selected.filter(isJet);
       const n = jets.filter(j => jetStrike(j, t?.x ?? x, t?.y ?? y, t)).length;
+      if (n) world.note(`[BW] Abwurf befohlen auf ${t ? t.type.id : `${Math.round(x)},${Math.round(y)}`}`);
       flash(n ? `Abwurf auf ${t ? t.type.name : 'den Punkt'}` : 'Keine Bomben mehr an Bord');
       bombAim = false;
       updateFireButton();
@@ -277,6 +279,7 @@ async function start() {
       const smoke = aimMode === 'smoke';
       const guns = selected.filter(isArtillery);
       const n = orderFire(world, guns, x, y, smoke);
+      if (n) world.note(`[BW] ${guns.map(g => g.type.id).join(', ')}: ${smoke ? 'Rauch' : 'Feuer'} auf ${Math.round(x)},${Math.round(y)}`);
       flash(n ? `${n === 1 ? guns.find(u => u.mission)!.type.name : `${n} Geschütze`}: ${smoke ? 'Rauch' : 'Feuer'} auf Planquadrat ${'ABCDEFGH'[Math.floor(x / 250)]}${Math.floor(y / 250) + 1}` : 'Kein Feuer: zu nah dran oder keine Munition');
       aimMode = null;
       updateFireButton();
@@ -300,6 +303,7 @@ async function start() {
         // Jets bombardieren das angetippte Ziel, alle anderen nehmen es ins Visier
         for (const j of selected.filter(isJet)) jetStrike(j, enemy.x, enemy.y, enemy);
         world.attack(selected.filter(u => !isJet(u)), enemy);
+        world.note(`[BW] Ziel ${enemy.type.id} für ${selected.map(u => u.type.id).join(', ')}`);
         flash(`Ziel: ${enemy.type.name}`);
       }
       else { cardUnit = enemy; showCard(enemy, 1); }
@@ -450,6 +454,33 @@ async function start() {
     if (strikeJet) flash(`${jet.type.name}: Ziel antippen (gesehener Gegner oder Punkt)`, 6000);
   });
   $('btn-level').addEventListener('click', cycleLevel);
+  // ---------- Gefechtsbericht: zum Kopieren und Auswerten ----------
+  const showReport = () => {
+    const b = battle;
+    const head = [
+      `Frontline – Gefechtsbericht · ${AHRENSFELDE.name} · Schwierigkeit ${LEVELS[level].name} · ${new Date().toLocaleString('de-DE')}`,
+      b ? `Ergebnis: ${b.winner === 'blue' ? 'Sieg' : b.winner === 'red' ? 'Niederlage' : 'läuft noch'} · Punkte BW ${Math.floor(b.score.blue)} : RU ${Math.floor(b.score.red)} · Spielzeit ${Math.round(world.time / 60)} min` : 'kein Gefecht (Sandkasten/Schießstand)',
+      `Verluste BW: ${world.units.filter(u => u.side === 'blue' && u.dead).map(u => u.type.id).join(', ') || '-'}`,
+      `Verluste RU: ${world.units.filter(u => u.side === 'red' && u.dead).map(u => u.type.id).join(', ') || '-'}`,
+      b ? b.snapshot() : '',
+      '',
+    ];
+    ($('report-text') as HTMLTextAreaElement).value = [...head, ...world.journal].join('\n');
+    $('report').hidden = false;
+  };
+  $('btn-report').addEventListener('click', () => { $('test-menu').hidden = true; showReport(); });
+  $('btn-end-report').addEventListener('click', showReport);
+  $('btn-report-close').addEventListener('click', () => { $('report').hidden = true; });
+  $('btn-report-copy').addEventListener('click', async () => {
+    const ta = $('report-text') as HTMLTextAreaElement;
+    try { await navigator.clipboard.writeText(ta.value); flash('Bericht kopiert – einfach im Chat einfügen'); }
+    catch {
+      // Ohne Zwischenablage-Recht: markieren, dann „Kopieren“ aus dem Menü des Handys
+      ta.focus(); ta.select(); ta.setSelectionRange(0, ta.value.length);
+      const ok = document.execCommand?.('copy');
+      flash(ok ? 'Bericht kopiert – einfach im Chat einfügen' : 'Text ist markiert – lange drücken und „Kopieren“ wählen', 5000);
+    }
+  });
   $('btn-end-level').addEventListener('click', cycleLevel);
   $('btn-end-restart').addEventListener('click', () => { select([]); startBattle(); cam.fit(); });
 

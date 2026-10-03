@@ -3,7 +3,7 @@
 import type { Graphics } from 'pixi.js';
 import type { World } from '../sim/world';
 
-const TRACER: Record<string, number> = { ke: 0xffffff, autocannon: 0xffd24a, mg: 0xffe58a, rifle: 0xfff3c0, heat: 0xffa040, atgm: 0xff7a2a };
+const TRACER: Record<string, number> = { ke: 0xffffff, autocannon: 0xffd24a, mg: 0xffe58a, rifle: 0xfff3c0, heat: 0xffa040, atgm: 0xff7a2a, aa: 0x9ae6ff, artillery: 0xffffff };
 
 export function drawFx(g: Graphics, w: World, scale: number, revealAll: boolean) {
   g.clear();
@@ -21,7 +21,7 @@ export function drawFx(g: Graphics, w: World, scale: number, revealAll: boolean)
     if (left < 2) g.circle(s.x, s.y, 6 * px).stroke({ width: 1.5 * px, color: s.smoke ? 0xeeeeee : 0xff9a3c, alpha: 0.8 });
   }
   for (const p of w.projectiles) {
-    const k = p.weapon.kind, color = TRACER[k];
+    const k = p.weapon.kind, color = TRACER[k] ?? 0xffffff;
     const back = Math.hypot(p.x - p.sx, p.y - p.sy);
     if (back < 1) continue;
     const dx = (p.x - p.sx) / back, dy = (p.y - p.sy) / back;

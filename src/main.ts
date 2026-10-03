@@ -177,7 +177,15 @@ async function start() {
   let feedShown = '';
 
   // ---------- Spielschleife ----------
+  // Ein Fehler in einem Bild darf das Spiel nicht einfrieren: melden und weiterlaufen
+  let lastError = 0;
   app.ticker.add(ticker => {
+    try { frame(ticker); } catch (err) {
+      console.error(err);
+      if (performance.now() - lastError > 5000) { lastError = performance.now(); flash(`Fehler: ${(err as Error).message}`, 4000); }
+    }
+  });
+  function frame(ticker: { deltaMS: number }) {
     const dt = Math.min(0.1, ticker.deltaMS / 1000) * speed;
     if (dt > 0) { world.update(dt); battle?.update(dt); }
     if (battle) updateBattleHud(battle);
@@ -221,7 +229,7 @@ async function start() {
       const end = u.path[u.path.length - 1];
       paths.circle(end.x, end.y, 5 / cam.scale).fill({ color: 0xffe066, alpha: 0.9 });
     }
-  });
+  }
 
   // ---------- Maßstab ----------
   cam.onChange = () => {

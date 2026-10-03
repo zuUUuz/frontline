@@ -167,6 +167,7 @@ function fire(w: World, u: Unit, i: number, e: Unit) {
   if (weapon.guided) st.inFlight = true;
   // Wer schießt, verrät sich
   u.revealedUntil = Math.max(u.revealedUntil ?? 0, w.time + REVEAL[weapon.kind]);
+  u.lastShot = w.time;
   const hit = Math.random() < hitChance(w, weapon, u, e, d);
   w.projectiles.push({ weapon, shooter: u, target: e, x: u.x, y: u.y, sx: u.x, sy: u.y, tx: e.x, ty: e.y, hit, dist: d });
   w.impacts.push({ x: u.x, y: u.y, time: w.time, kind: 'muzzle', shooter: u });

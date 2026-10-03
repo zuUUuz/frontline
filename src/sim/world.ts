@@ -37,6 +37,7 @@ export interface Unit {
   revealedUntil?: number; // hat geschossen und ist bis dahin für den Gegner sichtbar
   lastHitFrom?: { x: number; y: number };
   retreating?: boolean;
+  lastShot?: number;     // Spielzeit des letzten eigenen Schusses
 }
 
 const SPOT_INTERVAL = 0.25; // so oft (Spielsekunden) wird neu geprüft, wer wen sieht

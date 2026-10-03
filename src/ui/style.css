@@ -36,6 +36,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 .info {
   position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 60px); transform: translateX(-50%); margin: 0;
   background: var(--panel); border: 1px solid var(--accent); border-radius: 4px; padding: 8px 12px; max-width: 90vw; text-align: center;
+  pointer-events: none; /* Hinweise dürfen keine Fingertipps auf die Karte schlucken */
 }
 
 /* Spiel ist fürs Querformat gemacht */
@@ -81,3 +82,42 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 .feed li { margin: 2px 0; }
 .feed .ev-blue { color: #ffb0a8; } /* eigene Verluste */
 .feed .ev-red { color: #b8e6ff; }  /* Treffer beim Gegner */
+
+/* Siegpunkte oben in der Mitte */
+.score {
+  position: absolute; left: 50%; transform: translateX(-50%); top: calc(env(safe-area-inset-top, 0px) + 54px);
+  background: var(--panel); border: 1px solid var(--edge); border-radius: 4px; padding: 4px 10px; pointer-events: none;
+  font-variant-numeric: tabular-nums; text-align: center;
+}
+.score-row { display: flex; align-items: center; gap: 8px; }
+.s-blue { color: #80d4ff; min-width: 36px; text-align: right; }
+.s-red { color: #ff8a80; min-width: 36px; text-align: left; }
+.score-track { position: relative; width: 140px; height: 8px; background: #2c3229; border-radius: 4px; overflow: hidden; }
+.score-track::after { content: ""; position: absolute; left: 50%; top: 0; bottom: 0; width: 1px; background: var(--muted); }
+.bar-blue { position: absolute; right: 50%; top: 0; bottom: 0; background: #3d8fd1; }
+.bar-red { position: absolute; left: 50%; top: 0; bottom: 0; background: #d9473c; }
+.score-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+/* Verstärkung */
+.reinf {
+  position: absolute; left: calc(env(safe-area-inset-left, 0px) + 10px); top: calc(env(safe-area-inset-top, 0px) + 54px);
+  width: min(460px, 58vw); max-height: calc(100% - 70px); overflow-y: auto; z-index: 3;
+  background: var(--panel); border: 1px solid var(--edge); border-radius: 4px; padding: 10px 12px;
+}
+.reinf h2 { margin: 0; font-size: 16px; }
+.reinf .sub { margin: 2px 0 8px; color: var(--muted); font-size: 12px; }
+.reinf-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px; }
+.reinf-card { display: grid; grid-template-columns: 1fr auto; gap: 2px 6px; text-align: left; padding: 6px 8px; align-content: start; }
+.reinf-card .r-name { grid-column: 1 / -1; }
+.reinf-card:disabled { opacity: 0.4; }
+.r-name { font-size: 13px; }
+.r-cat, .r-left { font-size: 11px; color: var(--muted); font-weight: 400; }
+.r-cost { font-size: 12px; color: var(--accent); }
+.r-left { text-align: right; }
+.r-cat { grid-column: 1 / -1; }
+
+/* Ende des Gefechts */
+.end { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(10, 12, 10, 0.55); z-index: 5; }
+.end-box { background: var(--panel); border: 1px solid var(--accent); border-radius: 6px; padding: 18px 24px; text-align: center; max-width: 80vw; }
+.end-box h1 { margin: 0 0 6px; font-size: 28px; }
+.end-box p { margin: 0 0 14px; color: var(--muted); }

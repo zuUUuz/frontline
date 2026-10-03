@@ -3,3 +3,10 @@ dist/
 maps/*/raw/
 *.log
 .DS_Store
+
+# Geheimnisse nie einchecken (API-Schlüssel usw.)
+.env
+.env.*
+!.env.example
+*.pem
+*.key

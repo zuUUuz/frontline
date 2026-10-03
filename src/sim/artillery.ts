@@ -12,7 +12,10 @@ const REVEAL = 10;          // s geortet nach jedem Schuss
 const BLAST_SUPPRESS = 70;  // Unterdrückung bei Einschlag direkt daneben
 
 export interface Mission { x: number; y: number; smoke: boolean; left: number; next: number }
-export interface Shell { x: number; y: number; sx: number; sy: number; t: number; arrive: number; smoke: boolean; shooter: Unit }
+export interface Shell {
+  x: number; y: number; sx: number; sy: number; t: number; arrive: number; smoke: boolean; shooter: Unit;
+  spec?: { lethal: number; topPen: number; heavy?: boolean }; // Bomben statt Granaten
+}
 
 export const isArtillery = (u: Unit) => !!u.type.artillery;
 
@@ -68,11 +71,11 @@ export function updateArtillery(w: World, dt: number) {
 }
 
 function blast(w: World, s: Shell) {
-  const a = s.shooter.type.artillery!;
+  const a = s.spec ?? s.shooter.type.artillery!;
   w.impacts.push({ x: s.x, y: s.y, time: w.time, kind: 'blast' });
   const reach = a.lethal * 4;
   for (const u of w.units) {
-    if (u.dead || u.carrier) continue;
+    if (u.dead || u.carrier || u.type.air) continue;
     const d = Math.hypot(u.x - s.x, u.y - s.y);
     if (d > reach) continue;
     const terrain = w.sight.terrainAt(u.x, u.y);
@@ -90,7 +93,8 @@ function blast(w: World, s: Shell) {
     } else {
       // Fahrzeuge: Volltreffer schlägt durchs Dach, Splitter reichen nur gegen dünne Panzerung
       let dmg = 0;
-      if (d < 3 && a.topPen >= u.type.armor.top) dmg = 6 * (0.7 + Math.random() * 0.6);
+      if (d < 3 && a.topPen >= u.type.armor.top) dmg = (s.spec?.heavy ? 12 : 6) * (0.7 + Math.random() * 0.6);
+      else if (s.spec?.heavy && d < a.lethal * 0.4) dmg = 14 * (1 - d / (a.lethal * 0.4));     // Druckwelle einer Bombe
       else if (d < a.lethal && u.type.armor.side <= 20) dmg = 3 * (1 - d / a.lethal);      // Splitter durch dünne Panzerung
       else if (d < 6) dmg = 0.8 * (1 - d / 6);                                              // Ketten, Optik, Anbauteile
       if (dmg > 0) {
@@ -101,7 +105,8 @@ function blast(w: World, s: Shell) {
     if (u.hp < 0.5 || (u.type.mobility !== 'foot' && u.hp <= 0)) {
       u.dead = true; u.hp = 0; u.path = []; u.speed = 0;
       w.impacts.push({ x: u.x, y: u.y, time: w.time, kind: 'kill' });
-      w.log(`Artillerie ${u.type.mobility === 'foot' ? 'reibt' : 'zerstört'} ${u.type.name}${u.type.mobility === 'foot' ? ' auf' : ''}`, u.side, true);
+      const by = s.spec ? s.shooter.type.name : 'Artillerie';
+      w.log(`${by} ${u.type.mobility === 'foot' ? 'reibt' : 'zerstört'} ${u.type.name}${u.type.mobility === 'foot' ? ' auf' : ''}`, u.side, true);
       if (u.cargo.length) w.ejectCargo(u);
       continue;
     }

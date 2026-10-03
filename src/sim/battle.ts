@@ -4,6 +4,7 @@
 import { Card, Scenario, cardCost, cardKey } from '../data/scenario';
 import type { Side, Unit, World } from './world';
 import { Commander } from './ai';
+import { parkJet } from './airstrike';
 
 export const SECTOR_CELL = 16; // Auflösung der Sektorkarte in Metern
 const CAPTURE_TIME = 8;        // Sekunden ungestörter Anwesenheit, bis ein Sektor wechselt
@@ -77,7 +78,8 @@ export class Battle {
     const e = entries.reduce((a, b) => (Math.hypot(b.x - dest.x, b.y - dest.y) < Math.hypot(a.x - dest.x, a.y - dest.y) ? b : a));
     const u = this.world.spawn(c.unit, side, e.x, e.y, side === 'blue' ? 0 : Math.PI);
     if (c.passengers) this.world.mount(this.world.spawn(c.passengers, side, e.x, e.y), u);
-    this.world.order([u], dest, true);
+    if (u.type.air === 'jet') parkJet(u); // Jets warten außerhalb der Karte auf ihren Einsatz
+    else this.world.order([u], dest, true);
     return u;
   }
 
@@ -85,7 +87,7 @@ export class Battle {
     if (this.winner) return;
     // Wer ist in welchem Sektor? (Zurückweichende zählen nicht)
     for (const s of this.sectors) s.present = { blue: 0, red: 0 };
-    for (const u of this.world.units) if (!u.dead && !u.retreating && !u.carrier) this.sectorAt(u.x, u.y).present[u.side]++;
+    for (const u of this.world.units) if (!u.dead && !u.retreating && !u.carrier && !u.type.air) this.sectorAt(u.x, u.y).present[u.side]++;
     for (const s of this.sectors) {
       const b = s.present.blue > 0, r = s.present.red > 0;
       s.contested = b && r;

@@ -16,6 +16,7 @@ import { SectorView } from './render/sectors';
 import { PINNED, menLeft } from './sim/combat';
 import { DUELS, setupDuel } from './sim/range';
 import { isArtillery, orderFire } from './sim/artillery';
+import { callStrike, isJet } from './sim/airstrike';
 
 const $ = (id: string) => document.getElementById(id)!;
 const MAP_ID = 'ahrensfelde';
@@ -42,6 +43,7 @@ async function start() {
   const paths = new Graphics();
   const unitLayer = new Container();
   const fx = new Graphics();
+  unitLayer.sortableChildren = true; // Luftfahrzeuge über den Bodentruppen
 
   // Nebel des Krieges wie bei Broken Arrow: was eigene Einheiten sehen, bleibt hell, der Rest wird leicht abgedunkelt
   const fogN = Math.ceil(map.size / VIEW_CELL);
@@ -123,7 +125,7 @@ async function start() {
   let revealAll = false;
   let fogTimer = 0;
   const updateFog = () => {
-    computeViewMap(world.sight, map.size, world.units.filter(u => u.side === 'blue' && !u.dead && !u.carrier), viewMap);
+    computeViewMap(world.sight, map.size, world.units.filter(u => u.side === 'blue' && !u.dead && !u.carrier && !u.offmap), viewMap);
     for (let i = 0; i < viewMap.length; i++) fogImg.data.set(viewMap[i] ? [0, 0, 0, 0] : [10, 14, 20, 105], i * 4);
     fogCtx.putImageData(fogImg, 0, 0);
     fogTexture.source.update();
@@ -139,7 +141,7 @@ async function start() {
   };
 
   function select(units: Unit[]) {
-    selected = units.filter(u => !u.dead && !u.carrier);
+    selected = units.filter(u => !u.dead && !u.carrier && u.type.air !== 'jet'); // Jets führt man über „Verstärkung“
     for (const v of views.values()) v.selected = selected.includes(v.unit);
     $('orders').hidden = selected.length === 0;
     cardUnit = selected.length === 1 ? selected[0] : null;
@@ -159,6 +161,7 @@ async function start() {
     $('btn-arty-smoke').setAttribute('aria-pressed', String(aimMode === 'smoke'));
   };
   let aimMode: 'he' | 'smoke' | null = null; // Artillerie wartet auf den Zielpunkt
+  let strikeJet: Unit | null = null;          // Jet wartet auf sein Ziel
   let cardUnit: Unit | null = null;
   let cardTimer = 0;
   let feedShown = '';
@@ -218,6 +221,14 @@ async function start() {
       const u = battle.buy('blue', deployId, { x: Math.min(map.size - 20, Math.max(20, x)), y: Math.min(map.size - 20, Math.max(20, y)) });
       if (u) { syncViews(); flash(`${u.type.name} rückt an`); }
       deployId = null;
+      return;
+    }
+    // Luftangriff: Ziel antippen (gesehene Einheit oder Punkt)
+    if (strikeJet) {
+      const target = world.unitAt(x, y, Math.max(16 / cam.scale, 6), 'red');
+      const t = target && (target.spotted || revealAll) ? target : undefined;
+      if (callStrike(world, strikeJet, t?.x ?? x, t?.y ?? y, t)) { syncViews(); flash(`${strikeJet.type.name} fliegt an${t ? ` – Ziel ${t.type.name}` : ''}`); }
+      strikeJet = null;
       return;
     }
     // Feuerauftrag: Zielpunkt antippen (überall, auch ohne Sicht)
@@ -333,8 +344,16 @@ async function start() {
         <span class="r-name">${cardName(c)}</span><span class="r-cat">${CATEGORY_NAME[t.category]}${c.passengers ? ' mit Infanterie' : ''}</span>
         <span class="r-cost">${cardCost(c)} KP</span><span class="r-left">${left}×</span></button>`;
     }).join('');
+    // Eigene Jets: Einsatz befehlen (bereit / im Einsatz / aufmunitionieren)
+    const jets = world.units.filter(u => u.side === 'blue' && isJet(u) && !u.dead);
+    const air = jets.map(j => {
+      const s = j.sortie!;
+      const state = s.phase === 'ready' ? 'bereit – Einsatz befehlen' : s.phase === 'rearm' ? `munitioniert auf (${Math.ceil(s.until - world.time)} s)` : 'im Einsatz';
+      return `<button class="hud-btn reinf-card air-card" type="button" data-jet="${j.id}" ${s.phase === 'ready' ? '' : 'disabled'}><span class="r-name">✈ ${j.type.name}</span><span class="r-cat">${state}</span></button>`;
+    }).join('');
+    const full = html + (air ? `<div class="air-title">Luftwaffe</div>${air}` : '');
     // Nur bei Änderung neu aufbauen, sonst gehen Fingertipps verloren
-    if (html !== reinfShown) { $('reinf-list').innerHTML = html; reinfShown = html; }
+    if (full !== reinfShown) { $('reinf-list').innerHTML = full; reinfShown = full; }
   };
   let reinfShown = '';
   $('btn-reinf').addEventListener('click', () => {
@@ -343,6 +362,13 @@ async function start() {
     if (open) { select([]); renderReinf(); }
   });
   $('reinf-list').addEventListener('click', e => {
+    const jetId = (e.target as HTMLElement).closest<HTMLElement>('[data-jet]')?.dataset.jet;
+    if (jetId) {
+      strikeJet = world.units.find(u => u.id === Number(jetId) && u.sortie?.phase === 'ready') ?? null;
+      $('reinf').hidden = true;
+      if (strikeJet) flash(`${strikeJet.type.name}: Ziel antippen (gesehener Gegner oder Punkt)`, 6000);
+      return;
+    }
     const id = (e.target as HTMLElement).closest<HTMLElement>('[data-unit]')?.dataset.unit;
     if (!id || !battle?.canBuy('blue', id)) return;
     deployId = id;

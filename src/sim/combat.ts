@@ -8,29 +8,34 @@ import type { Unit, World } from './world';
 type Kind = Weapon['kind'];
 
 // Lebenspunkte je Fahrzeugart; Infanterie hat so viele, wie sie Soldaten hat
-export const MAX_HP: Record<Category, number> = { tank: 10, ifv: 6, apc: 5, recon: 3, infantry: 0, at: 0, artillery: 4 };
+export const MAX_HP: Record<Category, number> = { tank: 10, ifv: 6, apc: 5, recon: 3, infantry: 0, at: 0, artillery: 4, heli: 4, jet: 5, aa: 4 };
 
 // Grund-Trefferchance auf kurze Entfernung
-const BASE_HIT: Record<Kind, number> = { ke: 0.9, atgm: 0.92, heat: 0.6, autocannon: 0.7, mg: 0.6, rifle: 0.5, artillery: 0 };
+const BASE_HIT: Record<Kind, number> = { ke: 0.9, atgm: 0.92, heat: 0.6, autocannon: 0.7, mg: 0.6, rifle: 0.5, artillery: 0 , aa: 0 };
 // Trefferchance, wenn der Schütze fährt (Lenkraketen und Panzerfäuste gar nicht)
-const MOVING_HIT: Record<Kind, number> = { ke: 0.6, atgm: 0, heat: 0, autocannon: 0.55, mg: 0.45, rifle: 0.35, artillery: 0 };
+const MOVING_HIT: Record<Kind, number> = { ke: 0.6, atgm: 0, heat: 0, autocannon: 0.55, mg: 0.45, rifle: 0.35, artillery: 0 , aa: 0.8 };
 const TARGET_MOVING = 0.8;
 // Deckung am Standort des Ziels
 const COVER_FOOT: Record<string, number> = { building: 0.4, forest: 0.6, scrub: 0.8, garden: 0.8 };
 const COVER_VEHICLE: Record<string, number> = { forest: 0.8 };
 // Schaden pro Durchschlag (Fahrzeug-Lebenspunkte) bzw. getötete Soldaten pro Treffer
 // (Kanonen schießen auf Infanterie Sprengmunition statt KE)
-const DAMAGE: Record<Kind, number> = { ke: 7, atgm: 8, heat: 7, autocannon: 1.2, mg: 0.6, rifle: 0.3, artillery: 0 };
-const KILLS: Record<Kind, number> = { ke: 1, atgm: 1.2, heat: 1, autocannon: 0.8, mg: 0.6, rifle: 0.4, artillery: 0 };
+const DAMAGE: Record<Kind, number> = { ke: 7, atgm: 8, heat: 7, autocannon: 1.2, mg: 0.6, rifle: 0.3, artillery: 0 , aa: 0 };
+const KILLS: Record<Kind, number> = { ke: 1, atgm: 1.2, heat: 1, autocannon: 0.8, mg: 0.6, rifle: 0.4, artillery: 0 , aa: 0 };
 const WEAK_SPOT = { chance: 0.12, armor: 0.45 }; // Wannenbug, Turmring usw.
 // Unterdrückung pro Beschuss (Fehlschuss zählt 60 %); Fahrzeugbesatzungen halb so stark, im Haus halb so stark
-const SUPPRESS: Record<Kind, number> = { ke: 15, atgm: 20, heat: 15, autocannon: 10, mg: 8, rifle: 4, artillery: 0 };
+const SUPPRESS: Record<Kind, number> = { ke: 15, atgm: 20, heat: 15, autocannon: 10, mg: 8, rifle: 4, artillery: 0 , aa: 0 };
 const SUPPRESS_DECAY = 8;    // pro Sekunde, sobald 3 s Ruhe ist
 export const PINNED = 70;    // ab hier schießt Infanterie nicht mehr und kriecht nur
 const RETREAT = 95;          // ab hier zieht sich Infanterie zurück
-const REVEAL: Record<Kind, number> = { ke: 6, atgm: 6, heat: 5, autocannon: 5, mg: 3, rifle: 3, artillery: 0 }; // Sekunden sichtbar nach Schuss
+const REVEAL: Record<Kind, number> = { ke: 6, atgm: 6, heat: 5, autocannon: 5, mg: 3, rifle: 3, artillery: 0 , aa: 4 }; // Sekunden sichtbar nach Schuss
 // Hinterhalt: erst schießen, wenn das Ziel so nah ist (Anteil der Reichweite bzw. Meter) – oder man selbst beschossen wird
-const AMBUSH_RANGE: Record<Kind, number> = { ke: 1800, atgm: 2000, heat: 1, autocannon: 1200, mg: 0.7, rifle: 0.8, artillery: 0 };
+const AMBUSH_RANGE: Record<Kind, number> = { ke: 1800, atgm: 2000, heat: 1, autocannon: 1200, mg: 0.7, rifle: 0.8, artillery: 0 , aa: 0.8 };
+// Gegen Luftziele: nur Flugabwehrraketen, Maschinenkanonen und MGs (Hubschrauber); Jets fast nur mit Raketen
+const AIR_HIT: Partial<Record<Kind, number>> = { aa: 0.85, autocannon: 0.35, mg: 0.18 };
+const JET_HIT: Partial<Record<Kind, number>> = { aa: 0.55, autocannon: 0.08 };
+const AIR_DAMAGE: Partial<Record<Kind, number>> = { aa: 6, autocannon: 1.1, mg: 0.35 };
+export const isAir = (u: Unit) => !!u.type.air;
 const THINK = 0.1;           // so oft wird über Ziele entschieden (Spielsekunden)
 const LINE_OF_FIRE_SLACK = 100; // so viel „Sichtkosten“ (Gebüsch, Waldrand) darf zwischen Schütze und Ziel sein
 
@@ -87,6 +92,7 @@ function think(w: World, u: Unit) {
   if (!enemies.length) return;
   const lof = new Map<Unit, boolean>();
   const canFireAt = (e: Unit) => {
+    if (e.type.air === 'jet') return true; // hoch am Himmel: immer freies Schussfeld
     if (!lof.has(e)) {
       const d = Math.hypot(e.x - u.x, e.y - u.y);
       lof.set(e, sightDistance(w.sight, u.x, u.y, e.x, e.y, d + LINE_OF_FIRE_SLACK) <= d + LINE_OF_FIRE_SLACK);
@@ -118,6 +124,11 @@ function think(w: World, u: Unit) {
 
 // Wie viel richtet die Waffe gegen dieses Ziel aus (0 = sinnlos)?
 function effect(weapon: Weapon, u: Unit, e: Unit, d: number) {
+  if (isAir(e)) {
+    const hit = (e.type.air === 'jet' ? JET_HIT : AIR_HIT)[weapon.kind] ?? 0;
+    return hit * (AIR_DAMAGE[weapon.kind] ?? 0) / e.maxHp * 3; // Luftziele sind gefährlich: bevorzugt bekämpfen
+  }
+  if (weapon.kind === 'aa') return 0; // Flugabwehrraketen nur gegen Luftziele
   if (isFoot(e)) {
     if (weapon.kind === 'atgm' || weapon.kind === 'heat') return 0; // keine Panzerabwehrwaffen auf Infanterie
     return KILLS[weapon.kind];
@@ -133,7 +144,7 @@ function effect(weapon: Weapon, u: Unit, e: Unit, d: number) {
 
 // Gefährliche Ziele zuerst
 function priority(e: Unit) {
-  const p: Record<Category, number> = { tank: 3, ifv: 2.5, at: 2.5, apc: 1.5, infantry: 1.5, recon: 1.2, artillery: 2.5 };
+  const p: Record<Category, number> = { tank: 3, ifv: 2.5, at: 2.5, apc: 1.5, infantry: 1.5, recon: 1.2, artillery: 2.5, heli: 3.5, jet: 3, aa: 2.5 };
   // Feuer bündeln: Angeschlagene zuerst erledigen
   return p[e.type.category] * (1 + 0.6 * (1 - e.hp / e.maxHp));
 }
@@ -153,6 +164,10 @@ export function facing(target: Unit, fromX: number, fromY: number): 'front' | 's
 
 export function hitChance(w: World, weapon: Weapon, u: Unit, e: Unit, d: number) {
   const k = weapon.kind;
+  if (isAir(e)) {
+    const base = (e.type.air === 'jet' ? JET_HIT : AIR_HIT)[k] ?? 0;
+    return base * (1 - 0.5 * (d / weapon.range) ** 1.5) * (1 - u.supp / 150);
+  }
   let p = BASE_HIT[k];
   p *= k === 'atgm' ? 1 - 0.15 * (d / weapon.range) : 1 - 0.6 * Math.pow(d / weapon.range, 1.5);
   if (u.speed > 0.5) p *= MOVING_HIT[k];
@@ -213,6 +228,13 @@ function land(w: World, p: Projectile) {
     return;
   }
   const name = u.type.name, tname = e.type.name;
+  if (isAir(e)) {
+    e.hp -= (AIR_DAMAGE[weapon.kind] ?? 0) * (0.7 + Math.random() * 0.6);
+    w.impacts.push({ x: e.x, y: e.y, time: w.time, kind: 'pen' });
+    if (e.hp <= 0) kill(w, e, `${name} schießt ${tname} ab`);
+    else if (weapon.kind !== 'mg') w.log(`${name} trifft ${tname}`, e.side);
+    return;
+  }
   if (isFoot(e)) {
     const before = menLeft(e);
     e.hp -= KILLS[weapon.kind] * (0.5 + Math.random()) * (inHouse ? 0.6 : 1);

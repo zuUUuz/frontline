@@ -10,6 +10,7 @@ import type { Side, Unit } from './world';
 import { Position, findPositions } from './positions';
 import { NAV_CELL } from './nav';
 import { isArtillery, orderFire } from './artillery';
+import { callStrike, isJet } from './airstrike';
 
 const MEMORY = 90;          // so lange (s) merkt sich die KI gesichtete Gegner
 const SCOUT_RANGE = 700;    // so nah muss eine Einheit an der Sektormitte gewesen sein, damit er als aufgeklärt gilt
@@ -32,6 +33,7 @@ const PACKAGES: Category[][] = [
   ['tank', 'ifv', 'infantry'],
   ['infantry', 'at', 'tank'],
   ['artillery', 'ifv', 'infantry'],
+  ['heli', 'infantry', 'tank'],
 ];
 
 type Phase = 'gather' | 'stage' | 'assault';
@@ -65,7 +67,8 @@ export class Commander {
     const b = this.battle, w = this.w, now = w.time;
     const all = w.units.filter(u => u.side === this.side && !u.dead && !u.carrier);
     const guns = all.filter(isArtillery);
-    const mine = all.filter(u => !isArtillery(u)); // Artillerie wird getrennt geführt
+    const jets = all.filter(isJet);
+    const mine = all.filter(u => !isArtillery(u) && !isJet(u)); // Artillerie und Jets werden getrennt geführt
     // Aufgeklärt ist, wo eigene Einheiten in der Nähe sind
     for (const s of b.sectors) if (mine.some(u => dist(u, s) < Math.min(SCOUT_RANGE, u.type.optics))) this.scouted.set(s, now);
     for (const g of this.groups) g.units = g.units.filter(u => !u.dead);
@@ -85,6 +88,7 @@ export class Commander {
     this.planAttack(mine);
     this.idle(mine);
     this.fireSupport(guns, mine);
+    this.airStrikes(jets, mine);
     // Wer in Stellung liegt, schießt erst, wenn der Gegner nah genug ist (Hinterhalt)
     for (const u of mine) u.ambush = this.posted.has(u) && !u.path.length;
   }
@@ -239,6 +243,23 @@ export class Commander {
     return null;
   }
 
+  // ---------- Jets ----------
+  // Lohnende Fahrzeugansammlung, möglichst ohne bekannte Flugabwehr in der Nähe
+  private airStrikes(jets: Unit[], mine: Unit[]) {
+    const now = this.w.time;
+    const ready = jets.filter(j => j.sortie?.phase === 'ready');
+    if (!ready.length) return;
+    const known = this.w.units.filter(e => e.side !== this.side && !e.dead && !e.carrier && e.lastSeen && now - e.lastSeen.time < 20);
+    const aa = known.filter(e => e.type.category === 'aa');
+    const c = this.cluster(known.filter(e => e.type.mobility !== 'foot' && !e.type.air));
+    if (!c || c.v < 150) return;
+    const defended = aa.some(e => dist(e.lastSeen!, c) < 3000);
+    if (defended && c.v < 350) return;
+    if (mine.some(u => dist(u, c) < 80)) return; // nicht auf eigene Leute
+    const target = known.find(e => dist(e.lastSeen!, c) < 60 && e.spotted);
+    callStrike(this.w, ready[0], c.x, c.y, target);
+  }
+
   // Dichteste Ansammlung bekannter Gegner (Mitte und Wert im Umkreis von 60 m)
   private cluster(list: Unit[]): (P & { v: number }) | null {
     let best: (P & { v: number }) | null = null;
@@ -321,12 +342,21 @@ export class Commander {
       // Artillerie gehört dazu: ab der zweiten Minute immer ein Geschütz im Einsatz (solange das Deck reicht)
       const guns = this.w.units.filter(u => u.side === this.side && !u.dead && isArtillery(u)).length;
       const gunsLeft = b.sc.decks[this.side].some(c => unitType(c.unit).category === 'artillery' && (b.left[this.side].get(cardKey(c)) ?? 0) > 0);
-      this.queue = !recon ? ['recon'] : guns < (this.w.time > 420 ? 2 : 1) && gunsLeft && this.w.time > 90 ? ['artillery'] : [...this.nextPackage()];
+      // Luft: ein Jet ab Minute 4; Flugabwehr, sobald gegnerische Luftfahrzeuge gesehen wurden
+      const has = (cat: Category) => this.w.units.filter(u => u.side === this.side && !u.dead && u.type.category === cat).length;
+      const left = (cat: Category) => b.sc.decks[this.side].some(c => unitType(c.unit).category === cat && (b.left[this.side].get(cardKey(c)) ?? 0) > 0);
+      const enemyAir = this.w.units.some(e => e.side !== this.side && !e.dead && e.type.air && e.lastSeen && this.w.time - e.lastSeen.time < 180);
+      this.queue = !recon ? ['recon']
+        : guns < (this.w.time > 420 ? 2 : 1) && gunsLeft && this.w.time > 90 ? ['artillery']
+        : enemyAir && has('aa') < 2 && left('aa') ? ['aa']
+        : this.w.time > 240 && has('jet') < 1 && left('jet') ? ['jet']
+        : [...this.nextPackage()];
     }
     const cat = this.queue[0];
     // Schützen- und Transportpanzer am liebsten mit Infanterie an Bord
     const cards = b.sc.decks[this.side].filter(c => (b.left[this.side].get(cardKey(c)) ?? 0) > 0 && unitType(c.unit).category === cat);
-    const card = cards.find(c => c.passengers) ?? cards[0];
+    // Hubschrauber: Kampfhubschrauber (Lufttransport führt die KI noch nicht)
+    const card = cat === 'heli' ? cards.find(c => !c.passengers) : cards.find(c => c.passengers) ?? cards[0];
     const id = card && cardKey(card);
     if (!id) { this.queue.shift(); return; } // Deck leer für diese Art
     if (!b.canBuy(this.side, id)) return; // sparen
@@ -507,7 +537,7 @@ export class Commander {
           const cat = u.type.category;
           // Halten und kämpfen: wer gerade schießt, bleibt stehen (trifft besser, Lenkraketen nur im Stand)
           if (this.w.time - (u.lastShot ?? -99) < 6 && cat !== 'infantry') { if (u.path.length) { this.w.stop([u]); this.dest.delete(u); } continue; }
-          const overwatch = !clear && (cat === 'tank' || cat === 'at');
+          const overwatch = !clear && (cat === 'tank' || cat === 'at' || cat === 'heli');
           const to = overwatch ? g.staging : cat === 'infantry' ? g.target : towards(g.target, g.staging, 80);
           this.move(u, jitter(to, overwatch ? 80 : 120, u.id), cat === 'infantry' || clear);
         }

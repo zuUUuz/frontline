@@ -44,12 +44,13 @@ export class UnitView {
     this.symbol.addChild(this.symbolGfx, this.label, this.ghostLabel);
     this.body.addChild(this.bodyGfx);
     this.root.addChild(this.ring, this.body, this.symbol, this.status);
+    if (unit.type.air) this.root.zIndex = unit.type.air === 'jet' ? 20 : 10;
   }
 
   // Jedes Bild: Position, Drehung, Detailstufe je Zoom; Gegner nur, wenn entdeckt (sonst Geist)
   update(scale: number, time: number, revealAll: boolean) {
     const u = this.unit, t = u.type;
-    if (u.carrier) { this.root.visible = false; return; } // sitzt im Fahrzeug
+    if (u.carrier || u.offmap) { this.root.visible = false; return; } // sitzt im Fahrzeug bzw. Jet nicht über der Karte
     if (u.dead && !this.wasDead) this.markDead();
     // Transporter zeigen, wie viele Soldaten an Bord sind
     const men = u.cargo.reduce((s, p) => s + menLeft(p), 0);
@@ -131,6 +132,20 @@ export class UnitView {
       }
       return;
     }
+    // Luftfahrzeuge von oben
+    if (t.air === 'heli') {
+      g.rect(-L * 0.5, -0.3, L * 0.5, 0.6).fill(shade(c.hull, 0.9));                       // Heckausleger
+      g.ellipse(L * 0.12, 0, L * 0.25, W * 0.28).fill(c.hull).stroke({ width: 0.12, color: INK }); // Rumpf
+      g.rect(-L * 0.5, -1.2, 0.5, 2.4).fill(shade(c.hull, 0.8));                           // Heckrotor
+      g.circle(L * 0.1, 0, L * 0.42).stroke({ width: 0.25, color: 0x202020, alpha: 0.5 });  // Rotorkreis
+      g.rect(L * 0.35, -W * 0.15, 0.35, W * 0.3).fill(c.tint);
+      return;
+    }
+    if (t.air === 'jet') {
+      g.poly([L / 2, 0, -L * 0.2, -W / 2, -L / 2, -W * 0.15, -L / 2, W * 0.15, -L * 0.2, W / 2]).fill(c.hull).stroke({ width: 0.15, color: INK });
+      g.rect(L * 0.2, -0.4, L * 0.25, 0.8).fill(c.tint);
+      return;
+    }
     // Wanne
     if (t.mobility === 'tracked') {
       g.rect(-L / 2, -W / 2, L, W * 0.22).fill(0x2d2d26);
@@ -173,6 +188,9 @@ function drawIcon(g: Graphics, cat: Category, wheeled: boolean, k: number) {
   const wheels = () => { g.circle(-4 * k, 6 * k, 1.6 * k).circle(4 * k, 6 * k, 1.6 * k).fill(INK); };
   switch (cat) {
     case 'tank': track(); break;
+    case 'heli': g.poly([-9 * k, -6 * k, 9 * k, 6 * k, 9 * k, -6 * k, -9 * k, 6 * k]).fill(INK); break; // Drehflügler
+    case 'jet': g.moveTo(-10 * k, 4 * k).lineTo(0, -6 * k).lineTo(10 * k, 4 * k).stroke(s); g.moveTo(0, -6 * k).lineTo(0, 7 * k).stroke(s); break;
+    case 'aa': g.arc(0, 5 * k, 9 * k, Math.PI, 0).stroke(s); g.moveTo(-10 * k, 5 * k).lineTo(10 * k, 5 * k).stroke(s); break;
     case 'artillery': g.circle(0, 0, 3.2 * k).fill(INK); if (wheeled) wheels(); else track(0.8); break; // APP-6: Punkt = Steilfeuer
     case 'ifv': X(); track(0.7); break;
     case 'apc': X(); wheels(); break;

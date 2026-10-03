@@ -5,6 +5,7 @@ import { NavGrid, NAV_CELL, findPath, freeAt, nearestPassable, segmentFree, spee
 import { SightGrid, canSpot, sightDistance } from './vision';
 import { CombatEvent, Impact, PINNED, Projectile, WeaponState, initCombat, updateCombat } from './combat';
 import { Mission, Shell, updateArtillery } from './artillery';
+import { Sortie, updateJets } from './airstrike';
 
 export type Side = 'blue' | 'red'; // blau = eigene Seite, rot = Gegner
 
@@ -45,6 +46,9 @@ export interface Unit {
   cargo: Unit[];         // wer in diesem Fahrzeug sitzt
   dismountPending?: boolean; // absitzen, sobald das Fahrzeug steht
   mountTarget?: number;  // Infanterie läuft zu diesem Fahrzeug und steigt ein
+  // ---------- Luft ----------
+  offmap?: boolean;      // Jet ist gerade nicht über der Karte (bereit oder beim Aufmunitionieren)
+  sortie?: Sortie;       // Jet: Einsatzstand
   // ---------- Artillerie ----------
   mission?: Mission;     // laufender Feuerauftrag
   smokeAmmo: number;     // Rauchgranaten
@@ -70,6 +74,8 @@ const ARRIVE = 2;
 const LOOKAHEAD = { tracked: 9, wheeled: 11, foot: 3 };
 // Ab diesem Winkel drehen Kettenfahrzeuge auf der Stelle statt im Bogen
 const PIVOT_ANGLE = 1.4;
+// Hubschrauber: Anteil der Reisegeschwindigkeit (Spieltempo), Drehrate (rad/s), Beschleunigung (m/s²)
+const HELI = { speed: 0.5, turn: 1.6, accel: 6 };
 
 export class World {
   units: Unit[] = [];
@@ -87,7 +93,7 @@ export class World {
 
   spawn(typeId: string, side: Side, x: number, y: number, heading = 0) {
     const type = unitType(typeId);
-    const p = nearestPassable(this.nav, type.mobility, x, y) ?? { x, y };
+    const p = type.air ? { x, y } : nearestPassable(this.nav, type.mobility, x, y) ?? { x, y };
     const unit = { id: this.nextId++, type, side, x: p.x, y: p.y, heading, path: [], fast: false, speed: 0, stuck: 0, spotted: false, cargo: [] } as unknown as Unit;
     initCombat(unit);
     this.units.push(unit);
@@ -159,7 +165,8 @@ export class World {
     const out = this.dismount(c);
     for (const p of out) {
       let alive = 0;
-      for (let m = 0; m < Math.ceil(p.hp); m++) if (Math.random() < 0.45) alive++;
+      const survive = c.type.air ? 0.15 : 0.45; // Absturz ist schlimmer als ein brennender Schützenpanzer
+      for (let m = 0; m < Math.ceil(p.hp); m++) if (Math.random() < survive) alive++;
       p.hp = alive;
       p.supp = 95; p.suppAt = this.time;
       if (alive === 0) { p.dead = true; this.log(`${p.type.name} im ${c.type.name} gefallen`, p.side, true); }
@@ -188,7 +195,8 @@ export class World {
       const spacing = u.type.mobility === 'foot' ? 20 : 35;
       const offset = (i - (sorted.length - 1) / 2) * spacing;
       const goal = { x: clamp(target.x + px * offset, 0, this.size), y: clamp(target.y + py * offset, 0, this.size) };
-      const path = findPath(this.nav, u, goal, { mobility: u.type.mobility, preferRoads: fast, danger }) ?? [];
+      // Hubschrauber fliegen direkt; Bodentruppen suchen einen Weg
+      const path = u.type.air ? [goal] : findPath(this.nav, u, goal, { mobility: u.type.mobility, preferRoads: fast, danger }) ?? [];
       // Wegpunkte direkt bei der Einheit weglassen, sonst dreht sie erst einmal um
       while (path.length > 1 && Math.hypot(path[0].x - u.x, path[0].y - u.y) < 12) path.shift();
       u.path = path;
@@ -211,10 +219,13 @@ export class World {
     if (this.wander) this.wanderEnemies();
     updateCombat(this, dt);
     updateArtillery(this, dt);
+    updateJets(this, dt);
     this.impacts = this.impacts.filter(i => this.time - i.time < 1.5);
     this.updateTransport();
     for (const u of this.units) {
       if (u.dead || u.carrier) continue;
+      if (u.type.air === 'heli') { this.flyHeli(u, dt); continue; }
+      if (u.type.air) continue; // Jets fliegen nach eigenen Regeln (airstrike.ts)
       const mob = u.type.mobility;
       let want = 0; // gewünschte Geschwindigkeit in m/s
       // Erreichte Wegpunkte abhaken: alle, die näher als der Vorausblick liegen (außer dem Ziel)
@@ -271,6 +282,25 @@ export class World {
         u.stuck = 0;
       }
     }
+  }
+
+  // Hubschrauber: direkt zum Ziel, abbremsen vor dem Ziel, schweben
+  private flyHeli(u: Unit, dt: number) {
+    const goal = u.path[0];
+    let want = 0;
+    if (goal) {
+      const d = Math.hypot(goal.x - u.x, goal.y - u.y);
+      if (d < 3) { u.path.shift(); }
+      else {
+        const diff = angleDiff(Math.atan2(goal.y - u.y, goal.x - u.x), u.heading);
+        u.heading += Math.max(-HELI.turn * dt, Math.min(HELI.turn * dt, diff));
+        want = (u.type.roadSpeed / 3.6) * HELI.speed * (u.fast ? 1 : CAUTIOUS.wheeled) * Math.max(0.15, Math.cos(diff));
+        want = Math.min(want, Math.sqrt(2 * HELI.accel * d) + 0.5);
+      }
+    }
+    u.speed = want > u.speed ? Math.min(want, u.speed + HELI.accel * dt) : Math.max(want, u.speed - HELI.accel * 2 * dt);
+    u.x = clamp(u.x + Math.cos(u.heading) * u.speed * dt, 5, this.size - 5);
+    u.y = clamp(u.y + Math.sin(u.heading) * u.speed * dt, 5, this.size - 5);
   }
 
   // Punkt auf dem Weg, bis zu LOOKAHEAD Meter voraus (Kurve statt Ecke für Ecke).
@@ -342,9 +372,11 @@ export class World {
   // und ein Gegner freie Sicht auf sie hat (Mündungsfeuer)
   private updateSpotting() {
     for (const u of this.units) {
-      if (u.dead || u.carrier) { u.spotted = false; continue; }
-      const enemies = this.units.filter(e => e.side !== u.side && !e.dead && !e.carrier);
-      u.spotted = enemies.some(e => canSpot(this.sight, e, u));
+      if (u.dead || u.carrier || u.offmap) { u.spotted = false; continue; }
+      const enemies = this.units.filter(e => e.side !== u.side && !e.dead && !e.carrier && !e.offmap && e.type.air !== 'jet');
+      // Radar der Luftabwehr sieht Luftfahrzeuge auch ohne Sicht; Jets über der Karte sieht ohnehin jeder
+      u.spotted = (u.type.air === 'jet' && !u.offmap) || enemies.some(e => canSpot(this.sight, e, u))
+        || (!!u.type.air && enemies.some(e => !!e.type.radar && Math.hypot(e.x - u.x, e.y - u.y) <= e.type.radar));
       if (!u.spotted && this.time < (u.revealedUntil ?? 0)) {
         u.spotted = enemies.some(e => {
           const d = Math.hypot(e.x - u.x, e.y - u.y);
@@ -385,7 +417,7 @@ export class World {
   unitAt(x: number, y: number, radius: number, side?: Side) {
     let best: Unit | null = null, bestD = radius;
     for (const u of this.units) {
-      if (u.dead || u.carrier || (side && u.side !== side)) continue;
+      if (u.dead || u.carrier || u.offmap || (side && u.side !== side)) continue;
       const d = Math.hypot(u.x - x, u.y - y);
       if (d < bestD) { best = u; bestD = d; }
     }

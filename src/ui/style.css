@@ -115,6 +115,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 .r-cost { font-size: 12px; color: var(--accent); }
 .r-left { text-align: right; }
 .r-cat { grid-column: 1 / -1; }
+.air-title { grid-column: 1 / -1; margin-top: 4px; font-weight: 700; color: var(--muted); font-size: 12px; }
 
 /* Ende des Gefechts */
 .end { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(10, 12, 10, 0.55); z-index: 5; }

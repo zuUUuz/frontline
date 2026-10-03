@@ -15,7 +15,7 @@ const SIGHT_COST: Record<Terrain, number> = {
 const EDGE = 12; // Meter am Anfang und Ende der Sichtlinie, die nicht zählen (Waldrand, Fenster)
 
 // Tarnung: Wie groß bzw. auffällig ist die Einheit (1 = Kampfpanzer im offenen Gelände)
-export const SIZE: Record<Category, number> = { tank: 1, ifv: 0.9, apc: 0.85, recon: 0.6, infantry: 0.35, at: 0.3, artillery: 0.9 };
+export const SIZE: Record<Category, number> = { tank: 1, ifv: 0.9, apc: 0.85, recon: 0.6, infantry: 0.35, at: 0.3, artillery: 0.9, heli: 1, jet: 1, aa: 0.8 };
 // Deckung am Standort des Ziels
 const CONCEAL: Record<Terrain, number> = {
   open: 1, grass: 1, field: 0.95, road: 1, bridge: 1, rail: 0.9, water: 1,
@@ -63,7 +63,8 @@ const inSmoke = (g: SightGrid, x: number, y: number) => g.smoke.some(s => Math.h
 export function canSpot(g: SightGrid, observer: Unit, target: Unit) {
   const dist = Math.hypot(target.x - observer.x, target.y - observer.y);
   if (dist > observer.type.optics) return false;
-  const conceal = SIZE[target.type.category] * CONCEAL[g.terrainAt(target.x, target.y)] * (target.speed > 0.5 ? MOVING : 1);
+  // Luftfahrzeuge: Gelände am Boden tarnt sie nicht (Häuser und Wald dazwischen blockieren aber weiter die Sicht)
+  const conceal = SIZE[target.type.category] * (target.type.air ? 1 : CONCEAL[g.terrainAt(target.x, target.y)]) * (target.speed > 0.5 ? MOVING : 1);
   const range = Math.max(MIN_SPOT, Math.min(observer.type.optics, observer.type.optics * conceal));
   return sightDistance(g, observer.x, observer.y, target.x, target.y, range) <= range;
 }

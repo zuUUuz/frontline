@@ -372,9 +372,22 @@ async function start() {
     }
     const id = (e.target as HTMLElement).closest<HTMLElement>('[data-unit]')?.dataset.unit;
     if (!id || !battle?.canBuy('blue', id)) return;
+    // Jets: sofort kaufen und gleich das Ziel für den ersten Einsatz wählen
+    if (unitType(battle.card('blue', id)!.unit).air === 'jet') {
+      const jet = battle.buy('blue', id, { x: 0, y: 0 });
+      $('reinf').hidden = true;
+      if (jet) { syncViews(); strikeJet = jet; flash(`${jet.type.name} bereit: Ziel antippen (gesehener Gegner oder Punkt)`, 7000); }
+      return;
+    }
     deployId = id;
     $('reinf').hidden = true;
     flash(`Ziel antippen: ${cardName(battle.card('blue', id)!)} kommt vom westlichen Kartenrand`, 6000);
+  });
+  $('btn-jet').addEventListener('click', () => {
+    const jet = world.units.find(u => u.side === 'blue' && isJet(u) && !u.dead && u.sortie?.phase === 'ready');
+    if (!jet) { flash('Jet noch nicht bereit'); return; }
+    strikeJet = strikeJet === jet ? null : jet;
+    if (strikeJet) flash(`${jet.type.name}: Ziel antippen (gesehener Gegner oder Punkt)`, 6000);
   });
   $('btn-level').addEventListener('click', cycleLevel);
   $('btn-end-level').addEventListener('click', cycleLevel);
@@ -392,6 +405,14 @@ async function start() {
     $('score-bar-red').style.width = `${(b.score.red / win) * 50}%`;
     $('score-sectors').textContent = `Sektoren ${b.held('blue')} : ${b.held('red')} · Ziel ${win}${speed === 0 ? ' · PAUSE' : ''}`;
     $('btn-reinf').textContent = `Verstärkung · ${Math.floor(b.points.blue)} KP`;
+    // Jet-Knopf oben: Stand des (ersten) eigenen Jets
+    const jet = world.units.find(u => u.side === 'blue' && isJet(u) && !u.dead);
+    $('btn-jet').hidden = !jet;
+    if (jet) {
+      const s = jet.sortie!;
+      $('btn-jet').textContent = s.phase === 'ready' ? '✈ bereit' : s.phase === 'rearm' ? `✈ ${Math.ceil(s.until - world.time)} s` : '✈ fliegt';
+      $('btn-jet').setAttribute('aria-pressed', String(strikeJet === jet));
+    }
     if (!$('reinf').hidden) renderReinf();
     if (b.winner && $('end').hidden) {
       const lost = (side: 'blue' | 'red') => world.units.filter(u => u.side === side && u.dead).length;

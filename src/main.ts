@@ -16,7 +16,7 @@ import { SectorView } from './render/sectors';
 import { PINNED, menLeft } from './sim/combat';
 import { DUELS, setupDuel } from './sim/range';
 import { isArtillery, orderFire } from './sim/artillery';
-import { callStrike, isJet } from './sim/airstrike';
+import { isJet, jetGoto, jetReturn, jetStrike, launchJet } from './sim/airstrike';
 
 const $ = (id: string) => document.getElementById(id)!;
 const MAP_ID = 'ahrensfelde';
@@ -62,6 +62,7 @@ async function start() {
 
   // ---------- Welt und Einheiten ----------
   const world = new World(buildNav(map), map.size, buildSight(map));
+  worldTime = () => world.time;
   const views = new Map<number, UnitView>();
   // Ansichten passend zu den Einheiten der Welt halten (Verstärkungen kommen laufend dazu)
   const syncViews = () => {
@@ -141,7 +142,7 @@ async function start() {
   };
 
   function select(units: Unit[]) {
-    selected = units.filter(u => !u.dead && !u.carrier && u.type.air !== 'jet'); // Jets führt man über „Verstärkung“
+    selected = units.filter(u => !u.dead && !u.carrier && !u.offmap);
     for (const v of views.values()) v.selected = selected.includes(v.unit);
     $('orders').hidden = selected.length === 0;
     cardUnit = selected.length === 1 ? selected[0] : null;
@@ -153,15 +154,24 @@ async function start() {
     $('btn-fire').textContent = hold ? 'Feuer halten' : 'Feuer frei';
     $('btn-fire').setAttribute('aria-pressed', String(hold));
     $('btn-dismount').hidden = !selected.some(u => u.cargo.length);
+    const jets = selected.filter(u => isJet(u) && u.sortie?.phase === 'flying');
+    $('btn-jet-bomb').hidden = !jets.some(j => j.weapons[0].ammo > 0);
+    $('btn-jet-home').hidden = !jets.length;
+    if (!jets.length) bombAim = false;
+    $('btn-jet-bomb').setAttribute('aria-pressed', String(bombAim));
+    // Nur Jets ausgewählt: Bewegen/Schnell/Stopp/Feuer passen nicht
+    const onlyJets = selected.length > 0 && selected.every(isJet);
+    for (const id of ['btn-move', 'btn-fast', 'btn-stop']) $(id).hidden = onlyJets;
     const arty = selected.some(isArtillery);
     $('btn-arty-he').hidden = $('btn-arty-smoke').hidden = !arty;
-    $('btn-fire').hidden = selected.length > 0 && selected.every(isArtillery); // Artillerie schießt nur auf Befehl
+    $('btn-fire').hidden = selected.length > 0 && selected.every(u => isArtillery(u) || isJet(u)); // schießen nur auf Befehl
     if (!arty) aimMode = null;
     $('btn-arty-he').setAttribute('aria-pressed', String(aimMode === 'he'));
     $('btn-arty-smoke').setAttribute('aria-pressed', String(aimMode === 'smoke'));
   };
   let aimMode: 'he' | 'smoke' | null = null; // Artillerie wartet auf den Zielpunkt
-  let strikeJet: Unit | null = null;          // Jet wartet auf sein Ziel
+  let strikeJet: Unit | null = null;          // Jet wartet auf sein Ziel (Start)
+  let bombAim = false;                        // ausgewählter Jet wartet auf das Bombenziel
   let cardUnit: Unit | null = null;
   let cardTimer = 0;
   let feedShown = '';
@@ -192,6 +202,12 @@ async function start() {
     // Wege der ausgewählten Einheiten
     paths.clear();
     for (const u of selected) {
+      // Jet: Linie zum Flug- bzw. Bombenziel
+      if (u.sortie?.phase === 'flying') {
+        const s = u.sortie;
+        paths.moveTo(u.x, u.y).lineTo(s.tx, s.ty).stroke({ width: 2 / cam.scale, color: s.strike ? 0xff9a3c : 0x9ad0ff, alpha: 0.8 });
+        paths.circle(s.tx, s.ty, (s.strike ? 10 : 220) / (s.strike ? cam.scale : 1)).stroke({ width: 1.5 / cam.scale, color: s.strike ? 0xff9a3c : 0x9ad0ff, alpha: 0.6 });
+      }
       // Ziel des Feuerauftrags als Fadenkreuz
       if (u.mission) {
         const r = 14 / cam.scale, m = u.mission;
@@ -227,8 +243,25 @@ async function start() {
     if (strikeJet) {
       const target = world.unitAt(x, y, Math.max(16 / cam.scale, 6), 'red');
       const t = target && (target.spotted || revealAll) ? target : undefined;
-      if (callStrike(world, strikeJet, t?.x ?? x, t?.y ?? y, t)) { syncViews(); flash(`${strikeJet.type.name} fliegt an${t ? ` – Ziel ${t.type.name}` : ''}`); }
+      // Gegner angetippt: Angriff; sonst hinfliegen und kreisen (aufklären). Danach ist der Jet ausgewählt.
+      const jet = strikeJet;
+      if (launchJet(world, jet, t?.x ?? x, t?.y ?? y, !!t, t)) {
+        syncViews();
+        flash(`${jet.type.name} fliegt an – ${t ? `Angriff auf ${t.type.name}` : 'kreist über dem Punkt'}`);
+        select([jet]);
+      }
       strikeJet = null;
+      return;
+    }
+    // Abwurf-Modus eines ausgewählten Jets: Ziel (Gegner oder Punkt) antippen
+    if (bombAim) {
+      const target = world.unitAt(x, y, Math.max(16 / cam.scale, 6), 'red');
+      const t = target && (target.spotted || revealAll) ? target : undefined;
+      const jets = selected.filter(isJet);
+      const n = jets.filter(j => jetStrike(j, t?.x ?? x, t?.y ?? y, t)).length;
+      flash(n ? `Abwurf auf ${t ? t.type.name : 'den Punkt'}` : 'Keine Bomben mehr an Bord');
+      bombAim = false;
+      updateFireButton();
       return;
     }
     // Feuerauftrag: Zielpunkt antippen (überall, auch ohne Sicht)
@@ -255,11 +288,20 @@ async function start() {
     const enemy = world.unitAt(x, y, radius, 'red');
     if (enemy && (enemy.spotted || revealAll)) {
       // Mit Auswahl: Ziel vorgeben; ohne Auswahl: Steckbrief des Gegners
-      if (selected.length) { world.attack(selected, enemy); flash(`Ziel: ${enemy.type.name}`); }
+      if (selected.length) {
+        // Jets bombardieren das angetippte Ziel, alle anderen nehmen es ins Visier
+        for (const j of selected.filter(isJet)) jetStrike(j, enemy.x, enemy.y, enemy);
+        world.attack(selected.filter(u => !isJet(u)), enemy);
+        flash(`Ziel: ${enemy.type.name}`);
+      }
       else { cardUnit = enemy; showCard(enemy, 1); }
       return;
     }
-    if (selected.length) { world.order(selected, { x, y }, fast); return; }
+    if (selected.length) {
+      for (const j of selected.filter(isJet)) jetGoto(j, x, y);
+      world.order(selected.filter(u => !isJet(u)), { x, y }, fast);
+      return;
+    }
     if (x < 0 || y < 0 || x > map.size || y > map.size) return;
     const t = TERRAIN_INFO[map.terrainAt(x, y)];
     flash(`${t.name}: ${t.cover} · Planquadrat ${'ABCDEFGH'[Math.floor(x / 250)]}${Math.floor(y / 250) + 1}`);
@@ -319,6 +361,16 @@ async function start() {
   };
   $('btn-arty-he').addEventListener('click', () => aim('he'));
   $('btn-arty-smoke').addEventListener('click', () => aim('smoke'));
+  $('btn-jet-bomb').addEventListener('click', () => {
+    bombAim = !bombAim;
+    updateFireButton();
+    if (bombAim) flash('Abwurf: Gegner oder Punkt antippen', 5000);
+  });
+  $('btn-jet-home').addEventListener('click', () => {
+    for (const j of selected.filter(isJet)) jetReturn(j);
+    flash('Rückkehr zum Aufmunitionieren');
+    select([]);
+  });
   $('btn-dismount').addEventListener('click', () => {
     // Steht das Fahrzeug, sofort absitzen (auch in der Pause), sonst sobald es angehalten hat
     for (const u of selected) if (u.cargo.length) { if (u.speed < 0.5) world.dismount(u); else u.dismountPending = true; }
@@ -491,6 +543,7 @@ async function start() {
 }
 
 // ---------- Steckbrief ----------
+let worldTime = () => 0; // Spielzeit für den Steckbrief (wird beim Start gesetzt)
 // Kompakt: Name, Zustand, Feuer, Munition. Alle Werte erst über „Details“.
 let cardDetails = false;
 let cardShown = '';
@@ -501,8 +554,9 @@ function showCard(u: Unit | null, _count: number) {
   const state = u.dead ? (foot ? 'aufgerieben' : 'zerstört')
     : foot ? `${menLeft(u)}/${t.men} Mann` : `${Math.round((u.hp / u.maxHp) * 100)} %`;
   const supp = u.dead ? '' : u.retreating ? ' · zieht sich zurück' : u.supp >= PINNED ? ' · niedergehalten' : u.supp > 3 ? ` · unterdrückt ${Math.round(u.supp)}` : '';
-  const fire = own && !u.dead ? ` · Feuer ${u.holdFire ? 'halten' : 'frei'}${u.targetId != null ? ' (Ziel)' : ''}` : '';
-  const ammo = own ? t.weapons.map((w, i) => `${shortName(w.name)} ${u.weapons[i].ammo}`).join(' · ') + (t.artillery ? ` · Rauch ${u.smokeAmmo}${u.mission ? ` · ${u.mission.smoke ? 'Rauch' : 'Feuer'}auftrag läuft` : ''}` : '') : '';
+  const fire = own && !u.dead && !t.artillery && t.air !== 'jet' ? ` · Feuer ${u.holdFire ? 'halten' : 'frei'}${u.targetId != null ? ' (Ziel)' : ''}` : '';
+  const jetInfo = own && u.sortie ? ` · Bomben ${u.weapons[0].ammo}${u.sortie.phase === 'flying' ? ` · Treibstoff ${Math.max(0, Math.ceil(u.sortie.fuelUntil - worldTime()))} s` : ''}` : '';
+  const ammo = own && u.sortie ? jetInfo.slice(3) : own ? t.weapons.map((w, i) => `${shortName(w.name)} ${u.weapons[i].ammo}`).join(' · ') + (t.artillery ? ` · Rauch ${u.smokeAmmo}${u.mission ? ` · ${u.mission.smoke ? 'Rauch' : 'Feuer'}auftrag läuft` : ''}` : '') : '';
   const details = cardDetails ? `
     <dl>
       <dt>Tempo</dt><dd>${t.roadSpeed} km/h Straße, ${t.offroadSpeed} km/h Gelände</dd>

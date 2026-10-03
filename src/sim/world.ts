@@ -373,7 +373,7 @@ export class World {
   private updateSpotting() {
     for (const u of this.units) {
       if (u.dead || u.carrier || u.offmap) { u.spotted = false; continue; }
-      const enemies = this.units.filter(e => e.side !== u.side && !e.dead && !e.carrier && !e.offmap && e.type.air !== 'jet');
+      const enemies = this.units.filter(e => e.side !== u.side && !e.dead && !e.carrier && !e.offmap); // auch Jets im Überflug klären auf
       // Radar der Luftabwehr sieht Luftfahrzeuge auch ohne Sicht; Jets über der Karte sieht ohnehin jeder
       u.spotted = (u.type.air === 'jet' && !u.offmap) || enemies.some(e => canSpot(this.sight, e, u))
         || (!!u.type.air && enemies.some(e => !!e.type.radar && Math.hypot(e.x - u.x, e.y - u.y) <= e.type.radar));

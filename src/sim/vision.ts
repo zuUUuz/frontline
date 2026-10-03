@@ -63,6 +63,11 @@ const inSmoke = (g: SightGrid, x: number, y: number) => g.smoke.some(s => Math.h
 export function canSpot(g: SightGrid, observer: Unit, target: Unit) {
   const dist = Math.hypot(target.x - observer.x, target.y - observer.y);
   if (dist > observer.type.optics) return false;
+  // Jet von oben: keine Sichtlinie nötig, aber Tarnung (Wald, Haus) wirkt weiter; Rauch verdeckt
+  if (observer.type.air === 'jet') {
+    const conceal = SIZE[target.type.category] * (target.type.air ? 1 : CONCEAL[g.terrainAt(target.x, target.y)]) * (target.speed > 0.5 ? MOVING : 1);
+    return dist <= Math.max(MIN_SPOT, observer.type.optics * conceal) && !g.smoke.some(s => Math.hypot(s.x - target.x, s.y - target.y) < s.r);
+  }
   // Luftfahrzeuge: Gelände am Boden tarnt sie nicht (Häuser und Wald dazwischen blockieren aber weiter die Sicht)
   const conceal = SIZE[target.type.category] * (target.type.air ? 1 : CONCEAL[g.terrainAt(target.x, target.y)]) * (target.speed > 0.5 ? MOVING : 1);
   const range = Math.max(MIN_SPOT, Math.min(observer.type.optics, observer.type.optics * conceal));
@@ -78,6 +83,14 @@ export function computeViewMap(g: SightGrid, size: number, observers: Unit[], ou
   out.fill(0);
   for (const o of observers) {
     const range = o.type.optics;
+    // Jet: sieht von oben alles im Umkreis
+    if (o.type.air === 'jet') {
+      const r = Math.ceil(range / VIEW_CELL), cx = Math.floor(o.x / VIEW_CELL), cy = Math.floor(o.y / VIEW_CELL);
+      for (let y = Math.max(0, cy - r); y < Math.min(n, cy + r + 1); y++) for (let x = Math.max(0, cx - r); x < Math.min(n, cx + r + 1); x++) {
+        if ((x - cx) ** 2 + (y - cy) ** 2 <= r * r) out[y * n + x] = 1;
+      }
+      continue;
+    }
     for (let r = 0; r < RAYS; r++) {
       const a = (r / RAYS) * Math.PI * 2, dx = Math.cos(a), dy = Math.sin(a);
       let budget = range, along = 0;

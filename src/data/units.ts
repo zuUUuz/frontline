@@ -89,7 +89,7 @@ export const UNIT_TYPES: UnitType[] = [
   {
     id: 'eurofighter', name: 'Eurofighter', faction: 'bw', category: 'jet', mobility: 'tracked', air: 'jet',
     roadSpeed: 600, offroadSpeed: 600, length: 16, width: 11, men: 1,
-    armor: { front: 5, side: 5, rear: 5, top: 5 }, cost: 220, optics: 0,
+    armor: { front: 5, side: 5, rear: 5, top: 5 }, cost: 220, optics: 1500,
     weapons: [{ name: 'GBU-48 (Lenkbomben)', kind: 'artillery', range: 0, penetration: 300, reload: 0, ammo: 2, speed: 0 }],
     bombs: { count: 2, lethal: 30, spread: 4 },
   },
@@ -126,7 +126,7 @@ export const UNIT_TYPES: UnitType[] = [
   {
     id: 'su34', name: 'Su-34', faction: 'ru', category: 'jet', mobility: 'tracked', air: 'jet',
     roadSpeed: 600, offroadSpeed: 600, length: 23, width: 15, men: 2,
-    armor: { front: 6, side: 6, rear: 6, top: 6 }, cost: 210, optics: 0,
+    armor: { front: 6, side: 6, rear: 6, top: 6 }, cost: 210, optics: 1500,
     weapons: [{ name: 'KAB-500L (Lenkbomben)', kind: 'artillery', range: 0, penetration: 300, reload: 0, ammo: 2, speed: 0 }],
     bombs: { count: 2, lethal: 32, spread: 6 },
   },

@@ -15,7 +15,7 @@ const SIGHT_COST: Record<Terrain, number> = {
 const EDGE = 12; // Meter am Anfang und Ende der Sichtlinie, die nicht zählen (Waldrand, Fenster)
 
 // Tarnung: Wie groß bzw. auffällig ist die Einheit (1 = Kampfpanzer im offenen Gelände)
-export const SIZE: Record<Category, number> = { tank: 1, ifv: 0.9, apc: 0.85, recon: 0.6, infantry: 0.35, at: 0.3 };
+export const SIZE: Record<Category, number> = { tank: 1, ifv: 0.9, apc: 0.85, recon: 0.6, infantry: 0.35, at: 0.3, artillery: 0.9 };
 // Deckung am Standort des Ziels
 const CONCEAL: Record<Terrain, number> = {
   open: 1, grass: 1, field: 0.95, road: 1, bridge: 1, rail: 0.9, water: 1,
@@ -26,16 +26,19 @@ const MIN_SPOT = 60;   // so nah wird alles entdeckt, was in Sichtlinie ist
 const STEP = 4;        // Schrittweite der Sichtlinie in Metern (= Rasterzelle)
 
 // Kosten-Raster einmal vorberechnen
-export interface SightGrid { w: number; cell: number; cost: Float32Array; terrainAt: (x: number, y: number) => Terrain }
+export interface Smoke { x: number; y: number; r: number; until: number }
+export interface SightGrid { w: number; cell: number; cost: Float32Array; terrainAt: (x: number, y: number) => Terrain; smoke: Smoke[] }
 
 export function buildSight(map: GameMap): SightGrid {
   const cost = Float32Array.from(map.terrain, t => SIGHT_COST[TERRAIN[t]]);
-  return { w: map.grid.w, cell: map.cell, cost, terrainAt: map.terrainAt };
+  return { w: map.grid.w, cell: map.cell, cost, terrainAt: map.terrainAt, smoke: [] };
 }
 
 // „Effektive Entfernung“ entlang der Sichtlinie: Meter mal Sichtkosten; Infinity, wenn ein Haus dazwischen ist
 export function sightDistance(g: SightGrid, ax: number, ay: number, bx: number, by: number, limit = Infinity) {
   const len = Math.hypot(bx - ax, by - ay);
+  // Rauch: wer durch eine Wolke schaut, sieht nichts dahinter
+  for (const s of g.smoke) if (segmentDist(s.x, s.y, ax, ay, bx, by) < s.r) return Infinity;
   const steps = Math.max(1, Math.ceil(len / STEP)), d = len / steps;
   let sum = 0;
   for (let i = 1; i < steps; i++) {
@@ -48,6 +51,13 @@ export function sightDistance(g: SightGrid, ax: number, ay: number, bx: number, 
   }
   return sum + d;
 }
+
+function segmentDist(px: number, py: number, ax: number, ay: number, bx: number, by: number) {
+  const dx = bx - ax, dy = by - ay, l2 = dx * dx + dy * dy;
+  const t = l2 ? Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / l2)) : 0;
+  return Math.hypot(ax + dx * t - px, ay + dy * t - py);
+}
+const inSmoke = (g: SightGrid, x: number, y: number) => g.smoke.some(s => Math.hypot(s.x - x, s.y - y) < s.r);
 
 // Kann der Beobachter das Ziel gerade entdecken?
 export function canSpot(g: SightGrid, observer: Unit, target: Unit) {
@@ -78,7 +88,7 @@ export function computeViewMap(g: SightGrid, size: number, observers: Unit[], ou
         budget -= STEP * c;
         if (budget < 0 && c !== Infinity) break;
         out[Math.floor(y / VIEW_CELL) * n + Math.floor(x / VIEW_CELL)] = 1; // auch das blockierende Haus selbst ist sichtbar
-        if (c === Infinity) break;
+        if (c === Infinity || (g.smoke.length && inSmoke(g, x, y))) break;
       }
     }
   }

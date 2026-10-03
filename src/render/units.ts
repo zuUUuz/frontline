@@ -146,7 +146,7 @@ export class UnitView {
       g.roundRect(-L / 2, -W / 2 + 0.25, L, W - 0.5, 0.5).fill(c.hull).stroke({ width: 0.12, color: INK });
     }
     // Turm und Rohr
-    const turret = t.category === 'tank' ? 0.42 : t.category === 'ifv' ? 0.3 : 0;
+    const turret = t.category === 'tank' ? 0.42 : t.category === 'ifv' ? 0.3 : t.category === 'artillery' && t.length > 6 ? 0.4 : 0;
     if (turret) {
       const tl = L * turret, tw = W * 0.55, tx = t.category === 'tank' ? -L * 0.05 : L * 0.05;
       if (t.gun) g.rect(tx + tl / 2 - 0.2, -0.2, t.gun + 1.2, 0.4).fill(0x1f1f19);
@@ -173,6 +173,7 @@ function drawIcon(g: Graphics, cat: Category, wheeled: boolean, k: number) {
   const wheels = () => { g.circle(-4 * k, 6 * k, 1.6 * k).circle(4 * k, 6 * k, 1.6 * k).fill(INK); };
   switch (cat) {
     case 'tank': track(); break;
+    case 'artillery': g.circle(0, 0, 3.2 * k).fill(INK); if (wheeled) wheels(); else track(0.8); break; // APP-6: Punkt = Steilfeuer
     case 'ifv': X(); track(0.7); break;
     case 'apc': X(); wheels(); break;
     case 'recon': g.moveTo(-w, h).lineTo(w, -h).stroke(s); if (wheeled) wheels(); break;

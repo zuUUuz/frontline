@@ -15,6 +15,7 @@ import { Battle } from './sim/battle';
 import { SectorView } from './render/sectors';
 import { PINNED, menLeft } from './sim/combat';
 import { DUELS, setupDuel } from './sim/range';
+import { isArtillery, orderFire } from './sim/artillery';
 
 const $ = (id: string) => document.getElementById(id)!;
 const MAP_ID = 'ahrensfelde';
@@ -150,7 +151,14 @@ async function start() {
     $('btn-fire').textContent = hold ? 'Feuer halten' : 'Feuer frei';
     $('btn-fire').setAttribute('aria-pressed', String(hold));
     $('btn-dismount').hidden = !selected.some(u => u.cargo.length);
+    const arty = selected.some(isArtillery);
+    $('btn-arty-he').hidden = $('btn-arty-smoke').hidden = !arty;
+    $('btn-fire').hidden = selected.length > 0 && selected.every(isArtillery); // Artillerie schießt nur auf Befehl
+    if (!arty) aimMode = null;
+    $('btn-arty-he').setAttribute('aria-pressed', String(aimMode === 'he'));
+    $('btn-arty-smoke').setAttribute('aria-pressed', String(aimMode === 'smoke'));
   };
+  let aimMode: 'he' | 'smoke' | null = null; // Artillerie wartet auf den Zielpunkt
   let cardUnit: Unit | null = null;
   let cardTimer = 0;
   let feedShown = '';
@@ -181,6 +189,12 @@ async function start() {
     // Wege der ausgewählten Einheiten
     paths.clear();
     for (const u of selected) {
+      // Ziel des Feuerauftrags als Fadenkreuz
+      if (u.mission) {
+        const r = 14 / cam.scale, m = u.mission;
+        paths.circle(m.x, m.y, r).moveTo(m.x - r * 1.5, m.y).lineTo(m.x + r * 1.5, m.y).moveTo(m.x, m.y - r * 1.5).lineTo(m.x, m.y + r * 1.5)
+          .stroke({ width: 2 / cam.scale, color: m.smoke ? 0xeeeeee : 0xff9a3c, alpha: 0.9 });
+      }
       if (!u.path.length) continue;
       paths.moveTo(u.x, u.y);
       for (const p of u.path) paths.lineTo(p.x, p.y);
@@ -204,6 +218,16 @@ async function start() {
       const u = battle.buy('blue', deployId, { x: Math.min(map.size - 20, Math.max(20, x)), y: Math.min(map.size - 20, Math.max(20, y)) });
       if (u) { syncViews(); flash(`${u.type.name} rückt an`); }
       deployId = null;
+      return;
+    }
+    // Feuerauftrag: Zielpunkt antippen (überall, auch ohne Sicht)
+    if (aimMode) {
+      const smoke = aimMode === 'smoke';
+      const guns = selected.filter(isArtillery);
+      const n = orderFire(world, guns, x, y, smoke);
+      flash(n ? `${n === 1 ? guns.find(u => u.mission)!.type.name : `${n} Geschütze`}: ${smoke ? 'Rauch' : 'Feuer'} auf Planquadrat ${'ABCDEFGH'[Math.floor(x / 250)]}${Math.floor(y / 250) + 1}` : 'Kein Feuer: zu nah dran oder keine Munition');
+      aimMode = null;
+      updateFireButton();
       return;
     }
     const radius = Math.max(16 / cam.scale, 6);
@@ -277,6 +301,13 @@ async function start() {
     if (cardUnit) showCard(cardUnit, 1);
   });
   $('btn-stop').addEventListener('click', () => { world.stop(selected); for (const u of selected) u.targetId = undefined; });
+  const aim = (mode: 'he' | 'smoke') => {
+    aimMode = aimMode === mode ? null : mode;
+    updateFireButton();
+    if (aimMode) flash(`${mode === 'he' ? 'Feuer' : 'Rauch'}: Zielpunkt auf der Karte antippen`, 5000);
+  };
+  $('btn-arty-he').addEventListener('click', () => aim('he'));
+  $('btn-arty-smoke').addEventListener('click', () => aim('smoke'));
   $('btn-dismount').addEventListener('click', () => {
     // Steht das Fahrzeug, sofort absitzen (auch in der Pause), sonst sobald es angehalten hat
     for (const u of selected) if (u.cargo.length) { if (u.speed < 0.5) world.dismount(u); else u.dismountPending = true; }
@@ -423,7 +454,7 @@ function showCard(u: Unit | null, _count: number) {
     : foot ? `${menLeft(u)}/${t.men} Mann` : `${Math.round((u.hp / u.maxHp) * 100)} %`;
   const supp = u.dead ? '' : u.retreating ? ' · zieht sich zurück' : u.supp >= PINNED ? ' · niedergehalten' : u.supp > 3 ? ` · unterdrückt ${Math.round(u.supp)}` : '';
   const fire = own && !u.dead ? ` · Feuer ${u.holdFire ? 'halten' : 'frei'}${u.targetId != null ? ' (Ziel)' : ''}` : '';
-  const ammo = own ? t.weapons.map((w, i) => `${shortName(w.name)} ${u.weapons[i].ammo}`).join(' · ') : '';
+  const ammo = own ? t.weapons.map((w, i) => `${shortName(w.name)} ${u.weapons[i].ammo}`).join(' · ') + (t.artillery ? ` · Rauch ${u.smokeAmmo}${u.mission ? ` · ${u.mission.smoke ? 'Rauch' : 'Feuer'}auftrag läuft` : ''}` : '') : '';
   const details = cardDetails ? `
     <dl>
       <dt>Tempo</dt><dd>${t.roadSpeed} km/h Straße, ${t.offroadSpeed} km/h Gelände</dd>

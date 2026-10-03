@@ -3,12 +3,12 @@
 // Neue Einheit = neuer Eintrag hier.
 
 export type Faction = 'bw' | 'ru';
-export type Category = 'tank' | 'ifv' | 'apc' | 'recon' | 'infantry' | 'at';
+export type Category = 'tank' | 'ifv' | 'apc' | 'recon' | 'infantry' | 'at' | 'artillery';
 export type Mobility = 'tracked' | 'wheeled' | 'foot';
 
 export interface Weapon {
   name: string;
-  kind: 'ke' | 'heat' | 'atgm' | 'autocannon' | 'mg' | 'rifle';
+  kind: 'ke' | 'heat' | 'atgm' | 'autocannon' | 'mg' | 'rifle' | 'artillery'; // Artillerie schießt nur auf Befehl (Feuerauftrag)
   range: number;       // wirksame Reichweite in m
   penetration: number; // mm
   reload: number;      // Sekunden zwischen zwei Schüssen bzw. Feuerstößen
@@ -36,9 +36,52 @@ export interface UnitType {
   weapons: Weapon[];
   transport?: number;  // Plätze für absitzende Infanterie
   gun?: number;        // Rohrlänge über die Wanne hinaus (für die Zeichnung)
+  artillery?: Artillery;
+}
+
+// Steilfeuer: Feuerauftrag auf einen Punkt, ohne Sichtlinie
+export interface Artillery {
+  rounds: number;      // Granaten je Feuerauftrag
+  interval: number;    // Sekunden zwischen zwei Granaten
+  shellSpeed: number;  // mittlere Geschwindigkeit über Grund (m/s), bestimmt die Flugzeit
+  spread: number;      // Streuung in m (eine Standardabweichung)
+  lethal: number;      // tödlicher Radius gegen ungeschützte Infanterie in m
+  topPen: number;      // Durchschlag bei Volltreffer von oben (mm)
+  smoke: number;       // Rauchgranaten an Bord
+  minRange: number;    // Mindestentfernung in m
 }
 
 export const UNIT_TYPES: UnitType[] = [
+  // ---------- Artillerie ----------
+  {
+    id: 'pzh2000', name: 'Panzerhaubitze 2000', faction: 'bw', category: 'artillery', mobility: 'tracked',
+    roadSpeed: 60, offroadSpeed: 45, length: 7.9, width: 3.6, men: 5, gun: 4.5,
+    armor: { front: 30, side: 15, rear: 10, top: 10 }, cost: 150, optics: 1500,
+    weapons: [{ name: '155 mm L52 (Spreng)', kind: 'artillery', range: 30000, penetration: 120, reload: 0, ammo: 48, speed: 300 }],
+    artillery: { rounds: 6, interval: 2.5, shellSpeed: 300, spread: 22, lethal: 22, topPen: 120, smoke: 12, minRange: 400 },
+  },
+  {
+    id: 'wiesel_mrs', name: 'Wiesel 2 Mörser 120 mm', faction: 'bw', category: 'artillery', mobility: 'tracked',
+    roadSpeed: 70, offroadSpeed: 50, length: 4.8, width: 1.9, men: 3, gun: 1.6,
+    armor: { front: 10, side: 8, rear: 6, top: 5 }, cost: 75, optics: 1200,
+    weapons: [{ name: '120 mm Mörser (Spreng)', kind: 'artillery', range: 8000, penetration: 60, reload: 0, ammo: 40, speed: 200 }],
+    artillery: { rounds: 8, interval: 2, shellSpeed: 200, spread: 30, lethal: 16, topPen: 60, smoke: 16, minRange: 200 },
+  },
+  {
+    id: 'msta', name: '2S19 Msta-S', faction: 'ru', category: 'artillery', mobility: 'tracked',
+    roadSpeed: 60, offroadSpeed: 40, length: 7.2, width: 3.6, men: 5, gun: 4.2,
+    armor: { front: 25, side: 15, rear: 10, top: 10 }, cost: 140, optics: 1500,
+    weapons: [{ name: '152 mm 2A64 (Spreng)', kind: 'artillery', range: 25000, penetration: 115, reload: 0, ammo: 48, speed: 300 }],
+    artillery: { rounds: 6, interval: 3, shellSpeed: 300, spread: 28, lethal: 21, topPen: 115, smoke: 12, minRange: 400 },
+  },
+  {
+    id: 'sani', name: '2S12 Sani 120 mm', faction: 'ru', category: 'artillery', mobility: 'wheeled',
+    roadSpeed: 80, offroadSpeed: 40, length: 6.5, width: 2.4, men: 5, gun: 1.5,
+    armor: { front: 6, side: 5, rear: 4, top: 3 }, cost: 65, optics: 1200,
+    weapons: [{ name: '120 mm 2B11 (Spreng)', kind: 'artillery', range: 7000, penetration: 60, reload: 0, ammo: 40, speed: 200 }],
+    artillery: { rounds: 8, interval: 2.2, shellSpeed: 200, spread: 32, lethal: 16, topPen: 60, smoke: 16, minRange: 200 },
+  },
+
   // ---------- Bundeswehr ----------
   {
     id: 'leopard2a7', name: 'Leopard 2A7', faction: 'bw', category: 'tank', mobility: 'tracked',
@@ -146,4 +189,5 @@ export const unitType = (id: string) => UNIT_TYPES.find(u => u.id === id)!;
 
 export const CATEGORY_NAME: Record<Category, string> = {
   tank: 'Kampfpanzer', ifv: 'Schützenpanzer', apc: 'Transportpanzer', recon: 'Aufklärung', infantry: 'Infanterie', at: 'Panzerabwehr',
+  artillery: 'Artillerie',
 };

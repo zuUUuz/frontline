@@ -41,10 +41,12 @@ export const AHRENSFELDE: Scenario = {
     blue: [
       { unit: 'fennek', count: 3 }, { unit: 'pzgren', count: 2 }, { unit: 'mells', count: 3 },
       { unit: 'boxer', count: 3, passengers: 'pzgren' }, { unit: 'puma', count: 4, passengers: 'pzgren' }, { unit: 'leopard2a7', count: 4 },
+      { unit: 'wiesel_mrs', count: 2 }, { unit: 'pzh2000', count: 2 },
     ],
     red: [
       { unit: 'tigr', count: 3 }, { unit: 'motostrelki', count: 2 }, { unit: 'kornet', count: 3 },
       { unit: 'btr82a', count: 3, passengers: 'motostrelki' }, { unit: 'bmp3', count: 4, passengers: 'motostrelki' }, { unit: 't90m', count: 4 },
+      { unit: 'sani', count: 2 }, { unit: 'msta', count: 2 },
     ],
   },
   startPoints: 500,

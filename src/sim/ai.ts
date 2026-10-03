@@ -9,6 +9,7 @@ import { cardKey } from '../data/scenario';
 import type { Side, Unit } from './world';
 import { Position, findPositions } from './positions';
 import { NAV_CELL } from './nav';
+import { isArtillery, orderFire } from './artillery';
 
 const MEMORY = 90;          // so lange (s) merkt sich die KI gesichtete Gegner
 const SCOUT_RANGE = 700;    // so nah muss eine Einheit an der Sektormitte gewesen sein, damit er als aufgeklärt gilt
@@ -30,6 +31,7 @@ const PACKAGES: Category[][] = [
   ['at', 'infantry', 'apc'],
   ['tank', 'ifv', 'infantry'],
   ['infantry', 'at', 'tank'],
+  ['artillery', 'ifv', 'infantry'],
 ];
 
 type Phase = 'gather' | 'stage' | 'assault';
@@ -61,7 +63,9 @@ export class Commander {
 
   think() {
     const b = this.battle, w = this.w, now = w.time;
-    const mine = w.units.filter(u => u.side === this.side && !u.dead && !u.carrier);
+    const all = w.units.filter(u => u.side === this.side && !u.dead && !u.carrier);
+    const guns = all.filter(isArtillery);
+    const mine = all.filter(u => !isArtillery(u)); // Artillerie wird getrennt geführt
     // Aufgeklärt ist, wo eigene Einheiten in der Nähe sind
     for (const s of b.sectors) if (mine.some(u => dist(u, s) < Math.min(SCOUT_RANGE, u.type.optics))) this.scouted.set(s, now);
     for (const g of this.groups) g.units = g.units.filter(u => !u.dead);
@@ -80,6 +84,7 @@ export class Commander {
     this.runGroups();
     this.planAttack(mine);
     this.idle(mine);
+    this.fireSupport(guns, mine);
     // Wer in Stellung liegt, schießt erst, wenn der Gegner nah genug ist (Hinterhalt)
     for (const u of mine) u.ambush = this.posted.has(u) && !u.path.length;
   }
@@ -168,6 +173,83 @@ export class Commander {
     return v;
   }
 
+  // ---------- Artillerie ----------
+  private fired = new Map<string, number>(); // wann zuletzt auf welches Ziel geschossen wurde
+  private smoked = new Set<Group>();
+
+  // Feuerstellung: hinten, nahe dem eigenen Kartenrand; nach jedem Auftrag Stellungswechsel (gegen Gegenbatterie)
+  private firingBase(u: Unit): P {
+    const h = this.home, inward = this.side === 'red' ? -1 : 1;
+    const k = (u.id * 0.618034) % 1;
+    return { x: h.x + inward * (220 + 120 * k), y: h.y + (k - 0.5) * 500 };
+  }
+
+  private fireSupport(guns: Unit[], mine: Unit[]) {
+    const now = this.w.time;
+    for (const g of guns) {
+      if (g.mission) continue;
+      const base = this.firingBase(g);
+      // Gerade gefeuert und geortet: Stellung wechseln
+      if (g.lastSeen && now - g.lastSeen.time < 15 && !g.path.length && dist(g, g.lastSeen) < 30) {
+        const a = Math.random() * Math.PI * 2;
+        this.move(g, { x: base.x + Math.cos(a) * 150, y: base.y + Math.sin(a) * 150 }, true, true);
+        continue;
+      }
+      if (g.path.length) continue;
+      if (dist(g, base) > 400) { this.move(g, base, true); continue; }
+      const t = this.pickFireTarget(g, mine);
+      if (!t) continue;
+      if (orderFire(this.w, [g], t.x, t.y, t.smoke)) this.fired.set(t.key, now);
+    }
+  }
+
+  // Wohin schießen? Gegenbatterie > Unterstützung der Angriffe (Spreng, beim Sturm Rauch) > Verteidigung > lohnende Ziele
+  private pickFireTarget(g: Unit, mine: Unit[]): (P & { smoke: boolean; key: string }) | null {
+    const now = this.w.time;
+    const known = this.w.units.filter(e => e.side !== this.side && !e.dead && !e.carrier && e.lastSeen && now - e.lastSeen.time < 40);
+    const safe = (p: P) => !mine.some(u => dist(u, p) < 90); // nicht auf eigene Leute
+    const recent = (key: string, s: number) => now - (this.fired.get(key) ?? -999) < s;
+    // 1. Gegenbatterie
+    for (const e of known) {
+      if (!isArtillery(e) || now - e.lastSeen!.time > 25) continue;
+      const key = `cb${e.id}`;
+      if (!recent(key, 20) && safe(e.lastSeen!)) return { ...e.lastSeen!, smoke: false, key };
+    }
+    // 2. Angriffe unterstützen: Rauch beim Sturm zwischen Feind und Bereitstellung, sonst Spreng auf den Feind im Ziel
+    for (const gr of this.groups) {
+      const c = this.cluster(known.filter(e => this.battle.sectorAt(e.lastSeen!.x, e.lastSeen!.y) === gr.target));
+      if (!c) continue;
+      if (gr.phase === 'assault' && !this.smoked.has(gr) && g.smokeAmmo > 0) {
+        this.smoked.add(gr);
+        const p = towards(c, gr.staging, Math.min(200, dist(c, gr.staging) * 0.4));
+        return { ...p, smoke: true, key: `smoke${p.x | 0}` };
+      }
+      const key = `sup${c.x >> 6},${c.y >> 6}`;
+      if (gr.phase !== 'gather' && !recent(key, 30) && safe(c)) return { ...c, smoke: false, key };
+    }
+    // 3. Verteidigung und 4. lohnende Ziele (Infanterie und leichte Fahrzeuge, gern stehend)
+    const soft = known.filter(e => e.type.mobility === 'foot' || e.type.armor.side <= 20);
+    const own = soft.filter(e => this.battle.sectorAt(e.lastSeen!.x, e.lastSeen!.y).owner === this.side);
+    for (const list of [own, soft]) {
+      const c = this.cluster(list);
+      if (!c || c.v < (list === own ? 40 : 90)) continue;
+      const key = `hit${c.x >> 6},${c.y >> 6}`;
+      if (!recent(key, 40) && safe(c)) return { ...c, smoke: false, key };
+    }
+    return null;
+  }
+
+  // Dichteste Ansammlung bekannter Gegner (Mitte und Wert im Umkreis von 60 m)
+  private cluster(list: Unit[]): (P & { v: number }) | null {
+    let best: (P & { v: number }) | null = null;
+    for (const e of list) {
+      const near = list.filter(o => dist(o.lastSeen!, e.lastSeen!) < 60);
+      const v = near.reduce((s, o) => s + value(o), 0);
+      if (!best || v > best.v) best = { x: near.reduce((s, o) => s + o.lastSeen!.x, 0) / near.length, y: near.reduce((s, o) => s + o.lastSeen!.y, 0) / near.length, v };
+    }
+    return best;
+  }
+
   // ---------- Absitzen ----------
   // Angreifer sitzen kurz vor dem Ziel ab; alle anderen, sobald sie angekommen sind oder beschossen werden
   private dismountWhenUseful(mine: Unit[]) {
@@ -236,7 +318,10 @@ export class Commander {
     const b = this.battle;
     if (!this.queue.length) {
       const recon = this.w.units.some(u => u.side === this.side && !u.dead && u.type.category === 'recon');
-      this.queue = recon ? [...this.nextPackage()] : ['recon'];
+      // Artillerie gehört dazu: ab der zweiten Minute immer ein Geschütz im Einsatz (solange das Deck reicht)
+      const guns = this.w.units.filter(u => u.side === this.side && !u.dead && isArtillery(u)).length;
+      const gunsLeft = b.sc.decks[this.side].some(c => unitType(c.unit).category === 'artillery' && (b.left[this.side].get(cardKey(c)) ?? 0) > 0);
+      this.queue = !recon ? ['recon'] : guns < (this.w.time > 420 ? 2 : 1) && gunsLeft && this.w.time > 90 ? ['artillery'] : [...this.nextPackage()];
     }
     const cat = this.queue[0];
     // Schützen- und Transportpanzer am liebsten mit Infanterie an Bord
@@ -246,8 +331,9 @@ export class Commander {
     if (!id) { this.queue.shift(); return; } // Deck leer für diese Art
     if (!b.canBuy(this.side, id)) return; // sparen
     // Neue Einheiten gleich dorthin, wo sie gebraucht werden: zur sammelnden Gruppe oder an die Front
-    const forming = this.groups.find(g => g.phase === 'gather');
-    const to = forming ? forming.rally : this.frontline();
+    const forming = cat === 'artillery' ? undefined : this.groups.find(g => g.phase === 'gather');
+    const h = this.home;
+    const to = cat === 'artillery' ? { x: h.x + (this.side === 'red' ? -280 : 280), y: h.y } : forming ? forming.rally : this.frontline();
     const u = b.buy(this.side, id, { x: to.x + (Math.random() - 0.5) * 100, y: to.y + (Math.random() - 0.5) * 100 });
     if (u) { this.queue.shift(); this.dest.set(u, to); if (forming) forming.units.push(u); }
   }

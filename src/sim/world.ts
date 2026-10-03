@@ -4,6 +4,7 @@ import { UnitType, unitType } from '../data/units';
 import { NavGrid, NAV_CELL, findPath, freeAt, nearestPassable, segmentFree, speedAt } from './nav';
 import { SightGrid, canSpot, sightDistance } from './vision';
 import { CombatEvent, Impact, PINNED, Projectile, WeaponState, initCombat, updateCombat } from './combat';
+import { Mission, Shell, updateArtillery } from './artillery';
 
 export type Side = 'blue' | 'red'; // blau = eigene Seite, rot = Gegner
 
@@ -44,6 +45,9 @@ export interface Unit {
   cargo: Unit[];         // wer in diesem Fahrzeug sitzt
   dismountPending?: boolean; // absitzen, sobald das Fahrzeug steht
   mountTarget?: number;  // Infanterie läuft zu diesem Fahrzeug und steigt ein
+  // ---------- Artillerie ----------
+  mission?: Mission;     // laufender Feuerauftrag
+  smokeAmmo: number;     // Rauchgranaten
 }
 
 const SPOT_INTERVAL = 0.25; // so oft (Spielsekunden) wird neu geprüft, wer wen sieht
@@ -72,6 +76,7 @@ export class World {
   time = 0; // Spielzeit in Sekunden
   wander = true; // Gegner bewegen sich zum Testen auf eigene Faust
   projectiles: Projectile[] = [];
+  shells: Shell[] = [];   // Artilleriegranaten im Flug
   impacts: Impact[] = [];
   events: CombatEvent[] = [];
   combatTimer = 0;
@@ -94,6 +99,8 @@ export class World {
   reset() {
     this.units = [];
     this.projectiles = [];
+    this.shells = [];
+    this.sight.smoke = [];
     this.impacts = [];
     this.events = [];
   }
@@ -189,6 +196,7 @@ export class World {
       u.wandering = false;
       u.retreating = false;
       u.mountTarget = undefined; // neuer Befehl ersetzt „Aufsitzen“
+      u.mission = undefined;     // … und einen Feuerauftrag
     });
   }
 
@@ -202,6 +210,7 @@ export class World {
     if (this.spotTimer <= 0) { this.spotTimer = SPOT_INTERVAL; this.updateSpotting(); }
     if (this.wander) this.wanderEnemies();
     updateCombat(this, dt);
+    updateArtillery(this, dt);
     this.impacts = this.impacts.filter(i => this.time - i.time < 1.5);
     this.updateTransport();
     for (const u of this.units) {

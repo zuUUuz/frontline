@@ -8,6 +8,18 @@ const TRACER: Record<string, number> = { ke: 0xffffff, autocannon: 0xffd24a, mg:
 export function drawFx(g: Graphics, w: World, scale: number, revealAll: boolean) {
   g.clear();
   const px = 1 / scale; // ein Bildschirmpixel in Metern
+  // Rauchwolken (verblassen am Ende)
+  for (const s of w.sight.smoke) {
+    const fade = Math.min(1, (s.until - w.time) / 8);
+    g.circle(s.x, s.y, s.r).fill({ color: 0xd8d8d0, alpha: 0.55 * fade });
+    g.circle(s.x, s.y, s.r * 0.6).fill({ color: 0xeeeee8, alpha: 0.35 * fade });
+  }
+  // Eigene Artilleriegranaten: Einschlagstelle kurz vorher markieren
+  for (const s of w.shells) {
+    if (s.shooter.side !== 'blue') continue;
+    const left = s.arrive - w.time;
+    if (left < 2) g.circle(s.x, s.y, 6 * px).stroke({ width: 1.5 * px, color: s.smoke ? 0xeeeeee : 0xff9a3c, alpha: 0.8 });
+  }
   for (const p of w.projectiles) {
     const k = p.weapon.kind, color = TRACER[k];
     const back = Math.hypot(p.x - p.sx, p.y - p.sy);
@@ -41,6 +53,12 @@ export function drawFx(g: Graphics, w: World, scale: number, revealAll: boolean)
         break;
       case 'pen':
         if (age < 0.8) g.circle(i.x, i.y, Math.max(3, 5 * px) * (1 + age)).fill({ color: 0xff8a2a, alpha: 0.9 * (1 - age / 0.8) });
+        break;
+      case 'blast':
+        if (age < 1) {
+          g.circle(i.x, i.y, 6 + age * 30).fill({ color: 0x3a3028, alpha: 0.45 * (1 - age) });
+          if (age < 0.25) g.circle(i.x, i.y, 10).fill({ color: 0xffb04a, alpha: 0.9 * (1 - age * 4) });
+        }
         break;
       case 'kill':
         g.circle(i.x, i.y, 4 + age * 10).fill({ color: 0x2a2622, alpha: 0.5 * (1 - age / 1.5) });

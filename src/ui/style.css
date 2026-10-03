@@ -101,16 +101,21 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 /* Verstärkung */
 .reinf {
   position: absolute; left: calc(env(safe-area-inset-left, 0px) + 10px); top: calc(env(safe-area-inset-top, 0px) + 54px);
-  width: min(460px, 58vw); max-height: calc(100% - 70px); overflow-y: auto; z-index: 3;
-  background: var(--panel); border: 1px solid var(--edge); border-radius: 4px; padding: 10px 12px;
+  width: min(660px, calc(100vw - 20px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px)));
+  /* sichtbare Höhe (dvh), damit auf dem Handy nichts unter der Browserleiste verschwindet */
+  max-height: calc(100vh - 64px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  max-height: calc(100dvh - 64px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+  overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; z-index: 3;
+  background: var(--panel); border: 1px solid var(--edge); border-radius: 4px; padding: 8px 10px 28px;
 }
-.reinf h2 { margin: 0; font-size: 16px; }
+.reinf h2 { margin: 0 0 6px; font-size: 15px; }
+.reinf h2 .sub { font-weight: 400; margin-left: 6px; }
 .reinf .sub { margin: 2px 0 8px; color: var(--muted); font-size: 12px; }
-.reinf-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px; }
-.reinf-card { display: grid; grid-template-columns: 1fr auto; gap: 2px 6px; text-align: left; padding: 6px 8px; align-content: start; }
+.reinf-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(118px, 1fr)); gap: 5px; }
+.reinf-card { display: grid; grid-template-columns: 1fr auto; gap: 1px 6px; text-align: left; padding: 5px 7px; align-content: start; font-size: 12px; }
 .reinf-card .r-name { grid-column: 1 / -1; }
 .reinf-card:disabled { opacity: 0.4; }
-.r-name { font-size: 13px; }
+.r-name { font-size: 12px; line-height: 1.2; overflow-wrap: anywhere; hyphens: auto; }
 .r-cat, .r-left { font-size: 11px; color: var(--muted); font-weight: 400; }
 .r-cost { font-size: 12px; color: var(--accent); }
 .r-left { text-align: right; }

@@ -341,7 +341,7 @@ async function start() {
     const html = AHRENSFELDE.decks.blue.map(c => {
       const t = unitType(c.unit), key = cardKey(c), left = b.left.blue.get(key) ?? 0;
       return `<button class="hud-btn reinf-card" type="button" data-unit="${key}" ${b.canBuy('blue', key) ? '' : 'disabled'}>
-        <span class="r-name">${cardName(c)}</span><span class="r-cat">${CATEGORY_NAME[t.category]}${c.passengers ? ' mit Infanterie' : ''}</span>
+        <span class="r-name">${cardName(c)}</span><span class="r-cat">${CATEGORY_NAME[t.category]}</span>
         <span class="r-cost">${cardCost(c)} KP</span><span class="r-left">${left}×</span></button>`;
     }).join('');
     // Eigene Jets: Einsatz befehlen (bereit / im Einsatz / aufmunitionieren)
@@ -351,7 +351,8 @@ async function start() {
       const state = s.phase === 'ready' ? 'bereit – Einsatz befehlen' : s.phase === 'rearm' ? `munitioniert auf (${Math.ceil(s.until - world.time)} s)` : 'im Einsatz';
       return `<button class="hud-btn reinf-card air-card" type="button" data-jet="${j.id}" ${s.phase === 'ready' ? '' : 'disabled'}><span class="r-name">✈ ${j.type.name}</span><span class="r-cat">${state}</span></button>`;
     }).join('');
-    const full = html + (air ? `<div class="air-title">Luftwaffe</div>${air}` : '');
+    // Luftwaffe oben: die braucht man im Gefecht am häufigsten
+    const full = (air ? `<div class="air-title">Luftwaffe</div>${air}<div class="air-title">Einheiten</div>` : '') + html;
     // Nur bei Änderung neu aufbauen, sonst gehen Fingertipps verloren
     if (full !== reinfShown) { $('reinf-list').innerHTML = full; reinfShown = full; }
   };

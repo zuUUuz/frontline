@@ -17,6 +17,8 @@ export interface Unit {
   fast: boolean;         // „Schnell bewegen“
   speed: number;         // aktuelle Geschwindigkeit in m/s (für Anzeige)
   stuck: number;         // Sekunden, die die Einheit trotz Weg nicht vorankommt
+  lastRepath?: { x: number; y: number }; // Ort der letzten Notfall-Neuplanung
+  watch?: { x: number; y: number; t: number }; // Wächter: wo die Einheit zuletzt wirklich vorankam
   spotted: boolean;      // nur Gegner: gerade von einer eigenen Einheit gesehen
   lastSeen?: { x: number; y: number; time: number }; // nur Gegner: letzte bekannte Position (Spielzeit in s)
   wanderAt?: number;     // nur Gegner im Testmodus: wann der nächste Bewegungsbefehl kommt
@@ -26,14 +28,16 @@ const SPOT_INTERVAL = 0.25; // so oft (Spielsekunden) wird neu geprüft, wer wen
 const WANDER = { radius: 350, pauseMin: 25, pauseMax: 60 }; // Testbewegung der Gegner
 
 // ---------- Stellschrauben fürs Fahrgefühl ----------
-// Spieltempo statt Echtzeit-Tempo: Fahrzeuge langsamer, Infanterie schneller, damit beides auf 2 km zusammenpasst
+// Spieltempo statt Echtzeit-Tempo: im Gelände Fahrzeuge gedrosselt und Infanterie schneller, damit beides
+// auf 2 km zusammenpasst; auf der Straße fahren Fahrzeuge nahe an ihrem echten Tempo
 const GAME_SPEED = { tracked: 0.5, wheeled: 0.45, foot: 2.7 };
+const ROAD_SPEED = { tracked: 0.75, wheeled: 0.85, foot: 2.7 };
 // Normales Bewegen ist vorsichtiger als „Schnell“ (Infanterie geht statt zu rennen)
 const CAUTIOUS = { tracked: 0.65, wheeled: 0.65, foot: 0.6 };
 // Drehgeschwindigkeit in Grad pro Sekunde; Kettenfahrzeuge drehen auf der Stelle, Radfahrzeuge lenken
 const TURN_RATE = { tracked: 45, wheeled: 35, foot: 240 };
 // Beschleunigung und Bremsen in m/s²
-const ACCEL = { tracked: 1.5, wheeled: 2.2, foot: 3 };
+const ACCEL = { tracked: 2.4, wheeled: 4, foot: 3 };
 // Ziel gilt als erreicht innerhalb dieser Entfernung
 const ARRIVE = 2;
 // Die Einheit zielt auf einen Punkt so weit voraus auf ihrem Weg (fährt dadurch Kurven statt Ecken)
@@ -104,8 +108,14 @@ export class World {
         u.heading += Math.max(-turn * dt, Math.min(turn * dt, diff));
         want = this.cruise(u);
         // Kettenfahrzeuge drehen bei großem Winkel auf der Stelle; festhängende Radfahrzeuge rangieren genauso
-        if ((mob === 'tracked' || (mob === 'wheeled' && u.stuck > 0.4)) && Math.abs(diff) > PIVOT_ANGLE * (mob === 'wheeled' ? 0.5 : 1)) want = 0;
-        else if (mob === 'wheeled') want *= Math.max(0.25, Math.cos(diff));           // im Bogen langsamer
+        if (mob === 'tracked' && Math.abs(diff) > PIVOT_ANGLE) want = 0;
+        // Festhängende Radfahrzeuge rangieren: langsam kriechend eindrehen (nie ganz stehen, sonst verklemmt es)
+        else if (mob === 'wheeled' && u.stuck > 0.4 && Math.abs(diff) > PIVOT_ANGLE * 0.5) want = 0.4;
+        else if (mob === 'wheeled') {
+          want *= Math.max(0.25, Math.cos(diff));                                       // im Bogen langsamer
+          // Punkt liegt näher als der Wendekreis und quer: fast im Stand eng eindrehen statt zu kreisen
+          if (Math.abs(diff) > 0.9 && dist < 6) want = Math.min(want, 0.4);
+        }
         else want *= Math.max(mob === 'foot' ? 0 : 0.2, Math.cos(diff));
         // Vor dem Ziel abbremsen
         const toGoal = Math.hypot(goal.x - u.x, goal.y - u.y);
@@ -119,8 +129,17 @@ export class World {
       // Notfall: schafft die Einheit trotz Weg kaum etwas von der gewollten Strecke, Weg von hier aus neu planen
       if (u.path.length && want > 0.3 && progress < 0.33) u.stuck += dt;
       else if (u.speed > 0.5) u.stuck = 0;
+      // Wächter: unabhängig vom Grund, wer mit Weg 3 s lang nicht vorankommt, gilt als festgefahren
+      if (!u.path.length || !u.watch || Math.hypot(u.x - u.watch.x, u.y - u.watch.y) > 0.5) u.watch = { x: u.x, y: u.y, t: this.time };
+      else if (this.time - u.watch.t > 3) { u.stuck = 2; u.watch = { x: u.x, y: u.y, t: this.time }; }
       if (u.stuck > 1.5) {
         const goal = u.path[u.path.length - 1];
+        // Klebt die Einheit seit der letzten Neuplanung am selben Fleck: auf die nächste freie Zellmitte setzen
+        if (u.lastRepath && Math.hypot(u.x - u.lastRepath.x, u.y - u.lastRepath.y) < 3) {
+          const free = nearestPassable(this.nav, mob, u.x + Math.cos(u.heading) * NAV_CELL, u.y + Math.sin(u.heading) * NAV_CELL);
+          if (free && Math.hypot(free.x - u.x, free.y - u.y) < 3 * NAV_CELL) { u.x = free.x; u.y = free.y; }
+        }
+        u.lastRepath = { x: u.x, y: u.y };
         u.path = findPath(this.nav, u, goal, { mobility: mob, preferRoads: u.fast }) ?? [];
         // Ist schon der erste Punkt nicht direkt erreichbar, zuerst zur nächsten freien Zellmitte
         if (u.path.length && !segmentFree(this.nav, mob, u, u.path[0])) {
@@ -203,8 +222,8 @@ export class World {
     const t = u.type, mob = t.mobility;
     const f = speedAt(this.nav, mob, u.x, u.y);
     const road = this.nav.road[Math.floor(u.y / NAV_CELL) * this.nav.w + Math.floor(u.x / NAV_CELL)] === 1;
-    const kmh = road ? t.roadSpeed : Math.min(t.offroadSpeed, t.roadSpeed * Math.max(f, 0.15));
-    return (kmh / 3.6) * GAME_SPEED[mob] * (u.fast ? 1 : CAUTIOUS[mob]);
+    const kmh = road ? t.roadSpeed * ROAD_SPEED[mob] : Math.min(t.offroadSpeed, t.roadSpeed * Math.max(f, 0.15)) * GAME_SPEED[mob];
+    return (kmh / 3.6) * (u.fast ? 1 : CAUTIOUS[mob]);
   }
 
   // Einheit an einer Stelle (für Antippen); radius in Metern

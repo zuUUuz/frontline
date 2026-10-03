@@ -10,7 +10,7 @@ import { buildSight, computeViewMap, VIEW_CELL } from './sim/vision';
 import { UnitView } from './render/units';
 import { drawFx } from './render/fx';
 import { CATEGORY_NAME, unitType } from './data/units';
-import { AHRENSFELDE } from './data/scenario';
+import { AHRENSFELDE, cardCost, cardKey, cardName } from './data/scenario';
 import { Battle } from './sim/battle';
 import { SectorView } from './render/sectors';
 import { PINNED, menLeft } from './sim/combat';
@@ -122,7 +122,7 @@ async function start() {
   let revealAll = false;
   let fogTimer = 0;
   const updateFog = () => {
-    computeViewMap(world.sight, map.size, world.units.filter(u => u.side === 'blue' && !u.dead), viewMap);
+    computeViewMap(world.sight, map.size, world.units.filter(u => u.side === 'blue' && !u.dead && !u.carrier), viewMap);
     for (let i = 0; i < viewMap.length; i++) fogImg.data.set(viewMap[i] ? [0, 0, 0, 0] : [10, 14, 20, 105], i * 4);
     fogCtx.putImageData(fogImg, 0, 0);
     fogTexture.source.update();
@@ -138,7 +138,7 @@ async function start() {
   };
 
   function select(units: Unit[]) {
-    selected = units.filter(u => !u.dead);
+    selected = units.filter(u => !u.dead && !u.carrier);
     for (const v of views.values()) v.selected = selected.includes(v.unit);
     $('orders').hidden = selected.length === 0;
     cardUnit = selected.length === 1 ? selected[0] : null;
@@ -149,6 +149,7 @@ async function start() {
     const hold = selected.length > 0 && selected.every(u => u.holdFire);
     $('btn-fire').textContent = hold ? 'Feuer halten' : 'Feuer frei';
     $('btn-fire').setAttribute('aria-pressed', String(hold));
+    $('btn-dismount').hidden = !selected.some(u => u.cargo.length);
   };
   let cardUnit: Unit | null = null;
   let cardTimer = 0;
@@ -165,12 +166,13 @@ async function start() {
     if (fogTimer <= 0) { fogTimer = 400; updateFog(); }
     for (const v of views.values()) v.update(cam.scale, world.time, revealAll);
     drawFx(fx, world, cam.scale, revealAll);
-    if (selected.some(u => u.dead)) select(selected);
+    if (selected.some(u => u.dead || u.carrier)) select(selected);
     // Steckbrief und Gefechtsmeldungen regelmäßig auffrischen
     cardTimer -= ticker.deltaMS;
     if (cardTimer <= 0) {
       cardTimer = 500;
       if (cardUnit) showCard(cardUnit, 1);
+      if (selected.length) updateFireButton();
       const recent = world.events.filter(e => e.major && world.time - e.time < 10).slice(-3);
       const html = recent.map(e => `<li class="ev-${e.side}">${e.text}</li>`).join('');
       if (html !== feedShown) { $('feed').innerHTML = html; feedShown = html; }
@@ -206,6 +208,14 @@ async function start() {
     }
     const radius = Math.max(16 / cam.scale, 6);
     const own = world.unitAt(x, y, radius, 'blue');
+    // Infanterie ausgewählt und eigenen Transporter angetippt: aufsitzen
+    const foot = selected.filter(u => u.type.mobility === 'foot');
+    if (own && foot.length && foot.length === selected.length && own.type.transport && !selected.includes(own)) {
+      const fits = foot.filter(u => world.freeSeats(own) >= Math.ceil(u.hp));
+      if (fits.length) { world.boardOrder(fits.slice(0, 1), own); flash(`${fits[0].type.name} steigt in ${own.type.name} ein`); select([]); return; }
+      flash(`Kein Platz im ${own.type.name}`);
+      return;
+    }
     if (own) { select(selected.length === 1 && selected[0] === own ? [] : [own]); return; }
     const enemy = world.unitAt(x, y, radius, 'red');
     if (enemy && (enemy.spotted || revealAll)) {
@@ -247,7 +257,7 @@ async function start() {
     const r = app.canvas.getBoundingClientRect();
     const a = cam.toWorld(Math.min(boxStart.x, e.clientX) - r.left, Math.min(boxStart.y, e.clientY) - r.top);
     const b = cam.toWorld(Math.max(boxStart.x, e.clientX) - r.left, Math.max(boxStart.y, e.clientY) - r.top);
-    select(world.units.filter(u => u.side === 'blue' && u.x >= a.x && u.x <= b.x && u.y >= a.y && u.y <= b.y));
+    select(world.units.filter(u => u.side === 'blue' && !u.carrier && u.x >= a.x && u.x <= b.x && u.y >= a.y && u.y <= b.y));
     boxStart = null;
     box.hidden = true;
     setBoxMode(false);
@@ -267,6 +277,11 @@ async function start() {
     if (cardUnit) showCard(cardUnit, 1);
   });
   $('btn-stop').addEventListener('click', () => { world.stop(selected); for (const u of selected) u.targetId = undefined; });
+  $('btn-dismount').addEventListener('click', () => {
+    // Steht das Fahrzeug, sofort absitzen (auch in der Pause), sonst sobald es angehalten hat
+    for (const u of selected) if (u.cargo.length) { if (u.speed < 0.5) world.dismount(u); else u.dismountPending = true; }
+    flash('Absitzen');
+  });
   $('btn-fire').addEventListener('click', () => {
     const hold = !selected.every(u => u.holdFire);
     for (const u of selected) { u.holdFire = hold; if (hold) u.targetId = undefined; }
@@ -282,10 +297,10 @@ async function start() {
     if (!battle) return;
     const b = battle;
     const html = AHRENSFELDE.decks.blue.map(c => {
-      const t = unitType(c.unit), left = b.left.blue.get(c.unit) ?? 0;
-      return `<button class="hud-btn reinf-card" type="button" data-unit="${c.unit}" ${b.canBuy('blue', c.unit) ? '' : 'disabled'}>
-        <span class="r-name">${t.name}</span><span class="r-cat">${CATEGORY_NAME[t.category]}</span>
-        <span class="r-cost">${t.cost} KP</span><span class="r-left">${left}×</span></button>`;
+      const t = unitType(c.unit), key = cardKey(c), left = b.left.blue.get(key) ?? 0;
+      return `<button class="hud-btn reinf-card" type="button" data-unit="${key}" ${b.canBuy('blue', key) ? '' : 'disabled'}>
+        <span class="r-name">${cardName(c)}</span><span class="r-cat">${CATEGORY_NAME[t.category]}${c.passengers ? ' mit Infanterie' : ''}</span>
+        <span class="r-cost">${cardCost(c)} KP</span><span class="r-left">${left}×</span></button>`;
     }).join('');
     // Nur bei Änderung neu aufbauen, sonst gehen Fingertipps verloren
     if (html !== reinfShown) { $('reinf-list').innerHTML = html; reinfShown = html; }
@@ -301,7 +316,7 @@ async function start() {
     if (!id || !battle?.canBuy('blue', id)) return;
     deployId = id;
     $('reinf').hidden = true;
-    flash(`Ziel antippen: ${unitType(id).name} kommt vom westlichen Kartenrand`, 6000);
+    flash(`Ziel antippen: ${cardName(battle.card('blue', id)!)} kommt vom westlichen Kartenrand`, 6000);
   });
   $('btn-level').addEventListener('click', cycleLevel);
   $('btn-end-level').addEventListener('click', cycleLevel);
@@ -420,7 +435,7 @@ function showCard(u: Unit | null, _count: number) {
   const html = `
     <h2><span class="side-${u.side}">■</span> ${t.name} <button class="card-more" type="button" data-more>${cardDetails ? 'weniger' : 'Details'}</button></h2>
     <p class="sub">${CATEGORY_NAME[t.category]} · ${state}${supp}${fire}</p>
-    ${ammo ? `<p class="ammo">${ammo}</p>` : ''}${details}`;
+    ${ammo ? `<p class="ammo">${ammo}</p>` : ''}${t.transport ? `<p class="ammo">${u.cargo.length ? `an Bord: ${u.cargo.map(p => `${p.type.name} (${menLeft(p)})`).join(', ')}` : `leer · ${t.transport} Plätze`}</p>` : ''}${details}`;
   card.hidden = false;
   if (html === cardShown) return; // nur bei Änderung neu aufbauen, sonst gehen Fingertipps verloren
   cardShown = html;

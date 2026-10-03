@@ -73,7 +73,7 @@ export function updateCombat(w: World, dt: number) {
   w.combatTimer -= dt;
   if (w.combatTimer > 0) return;
   w.combatTimer = THINK;
-  for (const u of w.units) if (!u.dead) think(w, u);
+  for (const u of w.units) if (!u.dead && !u.carrier) think(w, u);
 }
 
 // Jede Waffe sucht sich das beste Ziel und schießt, sobald sie geladen ist
@@ -260,4 +260,5 @@ function kill(w: World, e: Unit, text: string) {
   e.speed = 0;
   w.impacts.push({ x: e.x, y: e.y, time: w.time, kind: 'kill' });
   w.log(text, e.side, true);
+  if (e.cargo.length) w.ejectCargo(e);
 }

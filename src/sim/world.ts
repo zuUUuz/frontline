@@ -39,6 +39,11 @@ export interface Unit {
   retreating?: boolean;
   lastShot?: number;     // Spielzeit des letzten eigenen Schusses
   ambush?: boolean;      // liegt im Hinterhalt: schießt erst, wenn der Gegner nah ist (KI)
+  // ---------- Transport ----------
+  carrier?: Unit;        // sitzt in diesem Fahrzeug (unsichtbar, kann nicht schießen und nicht beschossen werden)
+  cargo: Unit[];         // wer in diesem Fahrzeug sitzt
+  dismountPending?: boolean; // absitzen, sobald das Fahrzeug steht
+  mountTarget?: number;  // Infanterie läuft zu diesem Fahrzeug und steigt ein
 }
 
 const SPOT_INTERVAL = 0.25; // so oft (Spielsekunden) wird neu geprüft, wer wen sieht
@@ -78,7 +83,7 @@ export class World {
   spawn(typeId: string, side: Side, x: number, y: number, heading = 0) {
     const type = unitType(typeId);
     const p = nearestPassable(this.nav, type.mobility, x, y) ?? { x, y };
-    const unit = { id: this.nextId++, type, side, x: p.x, y: p.y, heading, path: [], fast: false, speed: 0, stuck: 0, spotted: false } as unknown as Unit;
+    const unit = { id: this.nextId++, type, side, x: p.x, y: p.y, heading, path: [], fast: false, speed: 0, stuck: 0, spotted: false, cargo: [] } as unknown as Unit;
     initCombat(unit);
     this.units.push(unit);
     return unit;
@@ -104,6 +109,58 @@ export class World {
     for (const u of units) u.targetId = target.id;
   }
 
+  // ---------- Transport ----------
+  freeSeats(c: Unit) {
+    return (c.type.transport ?? 0) - c.cargo.reduce((s, p) => s + Math.ceil(p.hp), 0);
+  }
+
+  // Infanterie steigt ein (muss nah dran sein)
+  mount(p: Unit, c: Unit) {
+    if (p.dead || c.dead || p.carrier || p.type.mobility !== 'foot' || this.freeSeats(c) < Math.ceil(p.hp)) return false;
+    p.carrier = c;
+    c.cargo.push(p);
+    p.path = []; p.speed = 0; p.mountTarget = undefined; p.targetId = undefined; p.retreating = false;
+    p.x = c.x; p.y = c.y;
+    return true;
+  }
+
+  // Alle steigen hinter dem Fahrzeug aus
+  dismount(c: Unit) {
+    const out = c.cargo;
+    c.cargo = [];
+    c.dismountPending = false;
+    out.forEach((p, i) => {
+      p.carrier = undefined;
+      const back = c.heading + Math.PI + (i - (out.length - 1) / 2) * 0.6;
+      const q = nearestPassable(this.nav, 'foot', c.x + Math.cos(back) * 8, c.y + Math.sin(back) * 8) ?? { x: c.x, y: c.y };
+      p.x = q.x; p.y = q.y; p.heading = c.heading;
+    });
+    return out;
+  }
+
+  // Befehl „Aufsitzen“: Infanterie läuft zum Fahrzeug
+  boardOrder(units: Unit[], c: Unit) {
+    for (const p of units) {
+      if (p.type.mobility !== 'foot' || p.carrier) continue;
+      this.order([p], c, true);
+      p.mountTarget = c.id;
+    }
+  }
+
+  // Fahrzeug zerstört: die Insassen trifft es hart, Überlebende springen niedergehalten heraus
+  ejectCargo(c: Unit) {
+    const out = this.dismount(c);
+    for (const p of out) {
+      let alive = 0;
+      for (let m = 0; m < Math.ceil(p.hp); m++) if (Math.random() < 0.45) alive++;
+      p.hp = alive;
+      p.supp = 95; p.suppAt = this.time;
+      if (alive === 0) { p.dead = true; this.log(`${p.type.name} im ${c.type.name} gefallen`, p.side, true); }
+      else this.log(`${p.type.name}: ${alive} überleben die Zerstörung des ${c.type.name}`, p.side, true);
+    }
+    return out;
+  }
+
   // Rückzug: schnell weg von der Gefahr
   retreat(u: Unit, to: { x: number; y: number }) {
     this.order([u], to, true);
@@ -112,7 +169,7 @@ export class World {
   }
 
   order(units: Unit[], target: { x: number; y: number }, fast: boolean, danger?: Float32Array) {
-    units = units.filter(u => !u.dead);
+    units = units.filter(u => !u.dead && !u.carrier);
     if (!units.length) return;
     const cx = units.reduce((s, u) => s + u.x, 0) / units.length;
     const cy = units.reduce((s, u) => s + u.y, 0) / units.length;
@@ -131,6 +188,7 @@ export class World {
       u.fast = fast;
       u.wandering = false;
       u.retreating = false;
+      u.mountTarget = undefined; // neuer Befehl ersetzt „Aufsitzen“
     });
   }
 
@@ -145,8 +203,9 @@ export class World {
     if (this.wander) this.wanderEnemies();
     updateCombat(this, dt);
     this.impacts = this.impacts.filter(i => this.time - i.time < 1.5);
+    this.updateTransport();
     for (const u of this.units) {
-      if (u.dead) continue;
+      if (u.dead || u.carrier) continue;
       const mob = u.type.mobility;
       let want = 0; // gewünschte Geschwindigkeit in m/s
       // Erreichte Wegpunkte abhaken: alle, die näher als der Vorausblick liegen (außer dem Ziel)
@@ -248,12 +307,34 @@ export class World {
   }
 
   // Wer sieht wen? Gegner sind entdeckt, solange mindestens eine eigene Einheit sie sieht
+  // Insassen fahren mit; Absitzen, sobald das Fahrzeug steht; Aufsitzen, sobald die Infanterie da ist
+  private updateTransport() {
+    for (const u of this.units) {
+      if (u.dead) continue;
+      for (const p of u.cargo) { p.x = u.x; p.y = u.y; p.heading = u.heading; }
+      if (u.dismountPending && u.cargo.length) {
+        u.path = [];
+        if (u.speed < 0.5) this.dismount(u);
+      }
+      if (u.mountTarget != null && !u.carrier) {
+        const c = this.units.find(c => c.id === u.mountTarget && !c.dead);
+        if (!c || this.freeSeats(c) < Math.ceil(u.hp)) { u.mountTarget = undefined; continue; }
+        const d = Math.hypot(c.x - u.x, c.y - u.y);
+        if (d < 14) this.mount(u, c);
+        else if (!u.path.length || Math.hypot(u.path[u.path.length - 1].x - c.x, u.path[u.path.length - 1].y - c.y) > 25) {
+          this.order([u], c, true);
+          u.mountTarget = c.id; // order() hat es zurückgesetzt
+        }
+      }
+    }
+  }
+
   // Beide Seiten: eine Einheit ist entdeckt, solange ein Gegner sie sieht – oder sie gerade geschossen hat
   // und ein Gegner freie Sicht auf sie hat (Mündungsfeuer)
   private updateSpotting() {
     for (const u of this.units) {
-      if (u.dead) { u.spotted = false; continue; }
-      const enemies = this.units.filter(e => e.side !== u.side && !e.dead);
+      if (u.dead || u.carrier) { u.spotted = false; continue; }
+      const enemies = this.units.filter(e => e.side !== u.side && !e.dead && !e.carrier);
       u.spotted = enemies.some(e => canSpot(this.sight, e, u));
       if (!u.spotted && this.time < (u.revealedUntil ?? 0)) {
         u.spotted = enemies.some(e => {
@@ -295,7 +376,7 @@ export class World {
   unitAt(x: number, y: number, radius: number, side?: Side) {
     let best: Unit | null = null, bestD = radius;
     for (const u of this.units) {
-      if (u.dead || (side && u.side !== side)) continue;
+      if (u.dead || u.carrier || (side && u.side !== side)) continue;
       const d = Math.hypot(u.x - x, u.y - y);
       if (d < bestD) { best = u; bestD = d; }
     }

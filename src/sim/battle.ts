@@ -1,8 +1,7 @@
 // Gefechtsregeln: Sektoren erobern, Siegpunkte, Kommandopunkte und Verstärkung aus dem Deck.
 // Dazu eine einfache Platzhalter-KI für die Gegenseite (die richtige KI kommt in Schritt 5b).
 
-import type { Scenario } from '../data/scenario';
-import { unitType } from '../data/units';
+import { Card, Scenario, cardCost, cardKey } from '../data/scenario';
 import type { Side, Unit, World } from './world';
 import { Commander } from './ai';
 
@@ -25,7 +24,7 @@ export class Battle {
   n: number;
   score: Record<Side, number> = { blue: 0, red: 0 };
   points: Record<Side, number>;
-  left: Record<Side, Map<string, number>>; // noch verfügbare Einheiten im Deck
+  left: Record<Side, Map<string, number>>; // noch verfügbare Karten im Deck (Schlüssel: cardKey)
   winner: Side | null = null;
   ai: Partial<Record<Side, Commander>> = {};
   private aiTimer = 0;
@@ -47,8 +46,8 @@ export class Battle {
     this.points = { blue: sc.startPoints * eco('blue'), red: sc.startPoints * eco('red') };
     this.left = {
       // Die KI bekommt auf höheren Stufen auch entsprechend mehr Einheiten im Deck
-      blue: new Map(sc.decks.blue.map(c => [c.unit, Math.round(c.count * eco('blue'))])),
-      red: new Map(sc.decks.red.map(c => [c.unit, Math.round(c.count * eco('red'))])),
+      blue: new Map(sc.decks.blue.map(c => [cardKey(c), Math.round(c.count * eco('blue'))])),
+      red: new Map(sc.decks.red.map(c => [cardKey(c), Math.round(c.count * eco('red'))])),
     };
   }
 
@@ -60,18 +59,24 @@ export class Battle {
 
   held(side: Side) { return this.sectors.filter(s => s.owner === side && !s.contested).length; }
 
-  canBuy(side: Side, id: string) {
-    return !this.winner && (this.left[side].get(id) ?? 0) > 0 && this.points[side] >= unitType(id).cost;
+  card(side: Side, key: string): Card | undefined { return this.sc.decks[side].find(c => cardKey(c) === key); }
+
+  canBuy(side: Side, key: string) {
+    const c = this.card(side, key);
+    return !!c && !this.winner && (this.left[side].get(key) ?? 0) > 0 && this.points[side] >= cardCost(c);
   }
 
-  // Einheit kaufen: kommt am nächstgelegenen eigenen Anmarschpunkt auf die Karte und fährt schnell zum Ziel
-  buy(side: Side, id: string, dest: { x: number; y: number }): Unit | null {
-    if (!this.canBuy(side, id)) return null;
-    this.points[side] -= unitType(id).cost;
-    this.left[side].set(id, this.left[side].get(id)! - 1);
+  // Karte kaufen: kommt am nächstgelegenen eigenen Anmarschpunkt auf die Karte und fährt schnell zum Ziel;
+  // Transporter bringen ihre Infanterie gleich mit (sitzt drin)
+  buy(side: Side, key: string, dest: { x: number; y: number }): Unit | null {
+    if (!this.canBuy(side, key)) return null;
+    const c = this.card(side, key)!;
+    this.points[side] -= cardCost(c);
+    this.left[side].set(key, this.left[side].get(key)! - 1);
     const entries = this.sc.entries[side];
     const e = entries.reduce((a, b) => (Math.hypot(b.x - dest.x, b.y - dest.y) < Math.hypot(a.x - dest.x, a.y - dest.y) ? b : a));
-    const u = this.world.spawn(id, side, e.x, e.y, side === 'blue' ? 0 : Math.PI);
+    const u = this.world.spawn(c.unit, side, e.x, e.y, side === 'blue' ? 0 : Math.PI);
+    if (c.passengers) this.world.mount(this.world.spawn(c.passengers, side, e.x, e.y), u);
     this.world.order([u], dest, true);
     return u;
   }
@@ -80,7 +85,7 @@ export class Battle {
     if (this.winner) return;
     // Wer ist in welchem Sektor? (Zurückweichende zählen nicht)
     for (const s of this.sectors) s.present = { blue: 0, red: 0 };
-    for (const u of this.world.units) if (!u.dead && !u.retreating) this.sectorAt(u.x, u.y).present[u.side]++;
+    for (const u of this.world.units) if (!u.dead && !u.retreating && !u.carrier) this.sectorAt(u.x, u.y).present[u.side]++;
     for (const s of this.sectors) {
       const b = s.present.blue > 0, r = s.present.red > 0;
       s.contested = b && r;

@@ -5,6 +5,7 @@
 
 import { unitType, type Category } from '../data/units';
 import type { Battle, Sector } from './battle';
+import { cardKey } from '../data/scenario';
 import type { Side, Unit } from './world';
 import { Position, findPositions } from './positions';
 import { NAV_CELL } from './nav';
@@ -35,7 +36,7 @@ type Phase = 'gather' | 'stage' | 'assault';
 interface Group { units: Unit[]; target: Sector; rally: P; staging: P; phase: Phase; since: number; startValue: number }
 interface P { x: number; y: number }
 
-export const value = (u: Unit) => u.type.cost * (u.hp / u.maxHp);
+export const value = (u: Unit): number => u.type.cost * (u.hp / u.maxHp) + u.cargo.reduce((s, p) => s + value(p), 0);
 const dist = (a: P, b: P) => Math.hypot(a.x - b.x, a.y - b.y);
 
 export class Commander {
@@ -60,7 +61,7 @@ export class Commander {
 
   think() {
     const b = this.battle, w = this.w, now = w.time;
-    const mine = w.units.filter(u => u.side === this.side && !u.dead);
+    const mine = w.units.filter(u => u.side === this.side && !u.dead && !u.carrier);
     // Aufgeklärt ist, wo eigene Einheiten in der Nähe sind
     for (const s of b.sectors) if (mine.some(u => dist(u, s) < Math.min(SCOUT_RANGE, u.type.optics))) this.scouted.set(s, now);
     for (const g of this.groups) g.units = g.units.filter(u => !u.dead);
@@ -71,6 +72,7 @@ export class Commander {
     if (now - this.dangerAt > 12) { this.dangerAt = now; this.danger = this.computeDanger(); }
     this.buy();
     this.relieveGarrisons();
+    this.dismountWhenUseful(mine);
     this.withdrawDamaged(mine);
     this.reactToFire(mine);
     this.scout(mine);
@@ -166,6 +168,23 @@ export class Commander {
     return v;
   }
 
+  // ---------- Absitzen ----------
+  // Angreifer sitzen kurz vor dem Ziel ab; alle anderen, sobald sie angekommen sind oder beschossen werden
+  private dismountWhenUseful(mine: Unit[]) {
+    const now = this.w.time;
+    for (const u of mine) {
+      if (!u.cargo.length || u.dismountPending) continue;
+      const g = this.groups.find(g => g.units.includes(u));
+      const underFire = now - (u.suppAt ?? -99) < 3;
+      const arrived = !u.path.length;
+      const go = g ? (g.phase === 'assault' && (dist(u, g.target) < 350 || underFire)) || (g.phase !== 'assault' && underFire)
+        : arrived || underFire;
+      if (!go) continue;
+      u.dismountPending = true;
+      if (g) g.units.push(...u.cargo); // die Infanterie gehört zur Gruppe des Fahrzeugs
+    }
+  }
+
   // ---------- Beschuss von unsichtbaren Gegnern ----------
   // Wer getroffen wird, ohne den Schützen zu sehen, kennt wenigstens die Richtung: die Stelle wird gemerkt
   private noteContacts(mine: Unit[]) {
@@ -220,7 +239,10 @@ export class Commander {
       this.queue = recon ? [...this.nextPackage()] : ['recon'];
     }
     const cat = this.queue[0];
-    const id = [...b.left[this.side].entries()].find(([id, n]) => n > 0 && unitType(id).category === cat)?.[0];
+    // Schützen- und Transportpanzer am liebsten mit Infanterie an Bord
+    const cards = b.sc.decks[this.side].filter(c => (b.left[this.side].get(cardKey(c)) ?? 0) > 0 && unitType(c.unit).category === cat);
+    const card = cards.find(c => c.passengers) ?? cards[0];
+    const id = card && cardKey(card);
     if (!id) { this.queue.shift(); return; } // Deck leer für diese Art
     if (!b.canBuy(this.side, id)) return; // sparen
     // Neue Einheiten gleich dorthin, wo sie gebraucht werden: zur sammelnden Gruppe oder an die Front

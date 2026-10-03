@@ -2,9 +2,14 @@
 // Sektoren werden nach dem nächstgelegenen Mittelpunkt aufgeteilt (jeder Punkt der Karte gehört zu einem Sektor).
 
 import type { Side } from '../sim/world';
+import { unitType } from './units';
 
 export interface SectorDef { name: string; x: number; y: number }
-export interface Card { unit: string; count: number }
+// Eine Karte im Deck: Einheit, Stückzahl und ggf. die Infanterie, die im Transporter mitfährt
+export interface Card { unit: string; count: number; passengers?: string }
+export const cardKey = (c: Card) => (c.passengers ? `${c.unit}+${c.passengers}` : c.unit);
+export const cardCost = (c: Card) => unitType(c.unit).cost + (c.passengers ? unitType(c.passengers).cost : 0);
+export const cardName = (c: Card) => unitType(c.unit).name + (c.passengers ? ` + ${unitType(c.passengers).name}` : '');
 
 export interface Scenario {
   name: string;
@@ -34,12 +39,12 @@ export const AHRENSFELDE: Scenario = {
   },
   decks: {
     blue: [
-      { unit: 'fennek', count: 3 }, { unit: 'pzgren', count: 6 }, { unit: 'mells', count: 3 },
-      { unit: 'boxer', count: 3 }, { unit: 'puma', count: 4 }, { unit: 'leopard2a7', count: 4 },
+      { unit: 'fennek', count: 3 }, { unit: 'pzgren', count: 2 }, { unit: 'mells', count: 3 },
+      { unit: 'boxer', count: 3, passengers: 'pzgren' }, { unit: 'puma', count: 4, passengers: 'pzgren' }, { unit: 'leopard2a7', count: 4 },
     ],
     red: [
-      { unit: 'tigr', count: 3 }, { unit: 'motostrelki', count: 6 }, { unit: 'kornet', count: 3 },
-      { unit: 'btr82a', count: 3 }, { unit: 'bmp3', count: 4 }, { unit: 't90m', count: 4 },
+      { unit: 'tigr', count: 3 }, { unit: 'motostrelki', count: 2 }, { unit: 'kornet', count: 3 },
+      { unit: 'btr82a', count: 3, passengers: 'motostrelki' }, { unit: 'bmp3', count: 4, passengers: 'motostrelki' }, { unit: 't90m', count: 4 },
     ],
   },
   startPoints: 500,

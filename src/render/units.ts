@@ -29,6 +29,7 @@ export class UnitView {
   private status = new Graphics(); // Zustand und Unterdrückung als kleine Balken
   private wasDead = false;
   private drawnMen = 0;
+  private shownCargo = 0;
   selected = false;
 
   constructor(readonly unit: Unit) {
@@ -48,7 +49,11 @@ export class UnitView {
   // Jedes Bild: Position, Drehung, Detailstufe je Zoom; Gegner nur, wenn entdeckt (sonst Geist)
   update(scale: number, time: number, revealAll: boolean) {
     const u = this.unit, t = u.type;
+    if (u.carrier) { this.root.visible = false; return; } // sitzt im Fahrzeug
     if (u.dead && !this.wasDead) this.markDead();
+    // Transporter zeigen, wie viele Soldaten an Bord sind
+    const men = u.cargo.reduce((s, p) => s + menLeft(p), 0);
+    if (!u.dead && men !== this.shownCargo) { this.shownCargo = men; this.label.text = men ? `${t.name} (${men})` : t.name; }
     if (t.mobility === 'foot' && !u.dead && menLeft(u) !== this.drawnMen) this.drawBody(); // Gefallene verschwinden
     // Wracks bleiben liegen; gegnerische nur, wenn man sie schon einmal gesehen hat
     const seen = u.side === 'blue' || u.spotted || revealAll || (!!u.dead && !!u.lastSeen);
